@@ -54,7 +54,16 @@ table{border-collapse:collapse}
 #cvwrap{border:2px solid #000;border-radius:6px;overflow:hidden;margin-top:8px}
 #cv{display:block;width:100%;height:52vh;min-height:260px;max-height:560px;touch-action:none;background:#fff}
 .reswrap{overflow:auto;max-height:46vh;border:2px solid #000;border-radius:6px;margin-top:10px}
-#res{min-width:640px;width:100%;font-size:15px}
+#res{min-width:780px;width:100%;font-size:15px}
+select{font:inherit;font-size:18px;font-weight:700;min-height:44px;padding:4px 8px;border:2px solid #666;border-radius:6px;background:#fff;color:#000;flex:1;min-width:0}
+.secnav{flex-wrap:nowrap}
+.secnav button{flex:none;width:56px}
+#svwrap{border:2px solid #000;border-radius:6px;overflow:hidden}
+#sv{display:block;width:100%;height:46vh;min-height:250px;max-height:480px;touch-action:pan-y;background:#fff}
+#sInfo table{width:100%;font-size:16px;margin-top:8px;border:2px solid #000}
+#sInfo th,#sInfo td{padding:8px 6px;border-bottom:1px solid #ccc;text-align:right;font-variant-numeric:tabular-nums}
+#sInfo th{background:#e8eefb;font-size:14px}
+#sInfo td:first-child,#sInfo th:first-child{text-align:left;font-weight:700}
 #res th{position:sticky;top:0;background:#e8eefb;z-index:2;padding:8px 6px;border-bottom:2px solid #000;font-size:13px;white-space:nowrap}
 #res td{padding:7px 6px;border-bottom:1px solid #ccc;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 #res td:first-child,#res th:first-child{position:sticky;left:0;text-align:left;font-weight:700}
@@ -83,6 +92,7 @@ dialog h2{margin:0 0 8px;font-size:19px}
   <nav class="tabs">
     <button data-tab="dados">Dados</button>
     <button data-tab="perfil">Perfil</button>
+    <button data-tab="sec">Seções</button>
     <button data-tab="arq">Arquivo</button>
   </nav>
 </div>
@@ -97,6 +107,15 @@ dialog h2{margin:0 0 8px;font-size:19px}
     </div>
     <div class="row"><div class="seg"><button id="cProg">Progressivo</button><button id="cReg">Regressivo</button></div></div>
     <div class="row"><label class="chk"><input type="checkbox" id="cEixo"> Incluir eixo na média</label></div>
+  </details>
+  <details open>
+    <summary>Seção transversal</summary>
+    <div class="row">
+      <label>Eixo → bordo LE (m)<input id="cDle" inputmode="decimal" autocomplete="off"></label>
+      <label>Eixo → bordo LD (m)<input id="cDld" inputmode="decimal" autocomplete="off"></label>
+    </div>
+    <div class="row"><label>Inclinação transversal (%)<input id="cIt" inputmode="decimal" autocomplete="off"></label></div>
+    <p class="hint">Caimento do eixo para os dois bordos: cota do bordo = greide do eixo − inclinação × distância. Use 0 para pista plana.</p>
   </details>
 
   <div class="gridwrap">
@@ -139,11 +158,23 @@ dialog h2{margin:0 0 8px;font-size:19px}
   </div>
   <div class="reswrap" id="reswrap">
     <table id="res">
-      <thead><tr><th>Estaca</th><th>Terr. LE</th><th>Terr. Eixo</th><th>Terr. LD</th><th>Greide</th><th>LE C/A</th><th>Eixo C/A</th><th>LD C/A</th></tr></thead>
+      <thead><tr><th>Estaca</th><th>Terr. LE</th><th>Terr. Eixo</th><th>Terr. LD</th><th>Greide eixo</th><th>Proj. LE</th><th>Proj. LD</th><th>LE C/A</th><th>Eixo C/A</th><th>LD C/A</th></tr></thead>
       <tbody id="rb"></tbody>
     </table>
   </div>
-  <p class="hint"><span class="A">A</span> = aterrar (greide acima do terreno) · <span class="C">C</span> = cortar (greide abaixo do terreno)</p>
+  <p class="hint"><span class="A">A</span> = aterrar (projeto acima do terreno) · <span class="C">C</span> = cortar (projeto abaixo do terreno). Linha rosa = greide do eixo; tracejada rosa = bordos de projeto. Toque numa linha da tabela para ver a seção.</p>
+</section>
+
+<section id="p-sec" hidden>
+  <div class="row secnav">
+    <button id="sPrev" aria-label="Estaca anterior">◀</button>
+    <select id="sSel" aria-label="Estaca"></select>
+    <button id="sNext" aria-label="Próxima estaca">▶</button>
+  </div>
+  <div id="svwrap"><canvas id="sv"></canvas></div>
+  <div class="row"><label style="flex:0 1 130px">Exagero V seção<input id="cSexag" inputmode="decimal" autocomplete="off"></label></div>
+  <div id="sInfo"></div>
+  <p class="hint">Arraste para o lado no desenho para trocar de estaca. Azul = aterro, vermelho = corte.</p>
 </section>
 
 <section id="p-arq" hidden>
@@ -236,11 +267,15 @@ function computeDists(rows,cfg){
     return d;
   });
 }
-function mediaOf(r,incEixo){
-  const v=[r.le,r.ld].filter(x=>x!=null);
-  if(incEixo&&r.ex!=null) v.push(r.ex);
-  if(!v.length) return r.ex==null?null:r.ex;
-  return v.reduce((a,b)=>a+b,0)/v.length;
+// greide do eixo inicial: a média dos pontos de projeto (bordos = eixo − i·d) fica igual à média do terreno
+function mediaOf(r,cfg){
+  const it=(+cfg.it||0)/100, v=[], off=[];
+  if(r.le!=null){v.push(r.le);off.push(it*(+cfg.dLE||0))}
+  if(r.ld!=null){v.push(r.ld);off.push(it*(+cfg.dLD||0))}
+  if(r.ex!=null&&(cfg.incEixo||!v.length)){v.push(r.ex);off.push(0)}
+  if(!v.length) return null;
+  const sum=a=>a.reduce((x,y)=>x+y,0);
+  return (sum(v)+sum(off))/v.length;
 }
 function evalLinear(pv,x){
   const n=pv.length;
@@ -301,20 +336,23 @@ function greideAt(st,r,ci){
 function calcState(st){
   const c=st.cfg, dists=computeDists(st.rows,c);
   const ci=st.mode==='curva'?curveInfo(st.pivs,c.Ldef):null;
-  const rows=st.rows.map((r,i)=>({id:r.id,i,x:dists[i],est:dists[i]==null?'?':fmtEst(dists[i],c.interval),le:r.le,ex:r.ex,ld:r.ld,m:mediaOf(r,c.incEixo),g:null,dLE:null,dEX:null,dLD:null}));
+  const it=(+c.it||0)/100;
+  const rows=st.rows.map((r,i)=>({id:r.id,i,x:dists[i],est:dists[i]==null?'?':fmtEst(dists[i],c.interval),le:r.le,ex:r.ex,ld:r.ld,m:mediaOf(r,c),g:null,pLE:null,pLD:null,dLE:null,dEX:null,dLD:null}));
   const df=(g,t)=>(g==null||t==null)?null:g-t;
   rows.forEach(r=>{
     if(r.x==null) return;
     r.g=greideAt(st,r,ci);
-    r.dLE=df(r.g,r.le); r.dEX=df(r.g,r.ex); r.dLD=df(r.g,r.ld);
+    if(r.g==null) return;
+    r.pLE=r.g-it*(+c.dLE||0); r.pLD=r.g-it*(+c.dLD||0);
+    r.dLE=df(r.pLE,r.le); r.dEX=df(r.g,r.ex); r.dLD=df(r.pLD,r.ld);
   });
   const pts=rows.filter(r=>r.x!=null&&(r.le!=null||r.ex!=null||r.ld!=null)).sort((a,b)=>a.x-b.x);
   return {rows,pts,ci};
 }
 function buildCSV(rows){
   const f3=v=>v==null?'':fmt(v,3);
-  const L=['Estaca;Terreno LE;Terreno Eixo;Terreno LD;Greide;LE C/A;Eixo C/A;LD C/A'];
-  rows.forEach(r=>L.push([r.est,f3(r.le),f3(r.ex),f3(r.ld),f3(r.g),caTxt(r.dLE),caTxt(r.dEX),caTxt(r.dLD)].join(';')));
+  const L=['Estaca;Terreno LE;Terreno Eixo;Terreno LD;Greide eixo;Projeto LE;Projeto LD;LE C/A;Eixo C/A;LD C/A'];
+  rows.forEach(r=>L.push([r.est,f3(r.le),f3(r.ex),f3(r.ld),f3(r.g),f3(r.pLE),f3(r.pLD),caTxt(r.dLE),caTxt(r.dEX),caTxt(r.dLD)].join(';')));
   return '﻿'+L.join('\r\n')+'\r\n';
 }
 function parseImport(text,interval){
@@ -375,7 +413,7 @@ const fmtIn=v=>v==null?'':String(+v.toFixed(4)).replace('.',',');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 function defState(){
-  return {cfg:{start:'0',interval:20,dir:1,incEixo:false,exag:10,tol:0.10,Ldef:40},
+  return {cfg:{start:'0',interval:20,dir:1,incEixo:false,exag:10,tol:0.10,Ldef:40,dLE:3.5,dLD:3.5,it:2,sexag:5},
     rows:[0,0,0,0,0].map(()=>newRow()),mode:'livre',free:{},pivs:[]};
 }
 function normState(o){
@@ -444,10 +482,11 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>showTab(b.dat
 function showTab(t){
   curTab=t;
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
-  ['dados','perfil','arq'].forEach(k=>$('#p-'+k).hidden=k!==t);
+  ['dados','perfil','sec','arq'].forEach(k=>$('#p-'+k).hidden=k!==t);
   try{localStorage.setItem(KEY+'_tab',t)}catch(e){}
   window.scrollTo(0,0);
   if(t==='perfil') resizeCv();
+  if(t==='sec') resizeSv();
 }
 
 /* ---------- configuração ---------- */
@@ -458,6 +497,7 @@ function syncCfgUI(){
   $('#cProg').classList.toggle('on',c.dir===1); $('#cReg').classList.toggle('on',c.dir===-1);
   $('#cEixo').checked=!!c.incEixo;
   $('#cExag').value=fmtIn(c.exag); $('#cTol').value=fmtIn(c.tol); $('#cLdef').value=fmtIn(c.Ldef);
+  $('#cDle').value=fmtIn(c.dLE); $('#cDld').value=fmtIn(c.dLD); $('#cIt').value=fmtIn(c.it); $('#cSexag').value=fmtIn(c.sexag);
   document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.m===S.mode));
   $('#mHint').textContent=HINT[S.mode];
   $('#pivRow').hidden=S.mode==='livre';
@@ -481,6 +521,14 @@ $('#cExag').onchange=e=>{
   if(view.fit) fitView(); else if(H) view.oz=zc-((H-PAD.b)-(PAD.t+H-PAD.b)/2)/(view.sx*v);
   draw();
 };
+[['#cDle','dLE',v=>v>=0],['#cDld','dLD',v=>v>=0],['#cIt','it',v=>v!=null&&Math.abs(v)<=50]].forEach(([sel,k,ok])=>{
+  $(sel).onchange=e=>{
+    const v=parseNum(e.target.value);
+    if(!ok(v)){toast('Valor inválido');syncCfgUI();return}
+    commit(); S.cfg[k]=v; syncCfgUI(); refresh(); save();
+  };
+});
+$('#cSexag').onchange=e=>{ const v=parseNum(e.target.value); if(v>0){S.cfg.sexag=v;save();drawSec()} syncCfgUI(); };
 $('#cTol').onchange=e=>{ const v=parseNum(e.target.value); if(v>=0){S.cfg.tol=v;save()} syncCfgUI(); };
 $('#cLdef').onchange=e=>{ const v=parseNum(e.target.value); if(v>0){S.cfg.Ldef=v;save()} syncCfgUI(); };
 
@@ -622,7 +670,7 @@ function renderRes(){
   const f3=v=>v==null?'—':fmt(v,3);
   let h='';
   for(const r of R.rows){
-    h+='<tr'+(r.id===hlId?' class="hl"':'')+'><td>'+esc(r.est)+'</td><td>'+f3(r.le)+'</td><td>'+f3(r.ex)+'</td><td>'+f3(r.ld)+'</td><td><b>'+f3(r.g)+'</b></td>'+caTd(r.dLE)+caTd(r.dEX)+caTd(r.dLD)+'</tr>';
+    h+='<tr data-id="'+r.id+'"'+(r.id===hlId?' class="hl"':'')+'><td>'+esc(r.est)+'</td><td>'+f3(r.le)+'</td><td>'+f3(r.ex)+'</td><td>'+f3(r.ld)+'</td><td><b>'+f3(r.g)+'</b></td><td>'+f3(r.pLE)+'</td><td>'+f3(r.pLD)+'</td>'+caTd(r.dLE)+caTd(r.dEX)+caTd(r.dLD)+'</tr>';
   }
   $('#rb').innerHTML=h;
   if(hlId){
@@ -633,7 +681,14 @@ function renderRes(){
 }
 let rq=false;
 function refresh(){ if(rq) return; rq=true; requestAnimationFrame(()=>{rq=false;refreshNow()}); }
-function refreshNow(){ R=calcState(S); renderRes(); draw(); }
+function refreshNow(){ R=calcState(S); renderRes(); draw(); if(curTab==='sec') drawSec(); }
+$('#rb').addEventListener('click',e=>{
+  const tr=e.target.closest('tr[data-id]');
+  if(!tr) return;
+  const r=R.rows.find(r=>r.id===tr.dataset.id);
+  if(!r||r.g==null) return;
+  secId=r.id; showTab('sec');
+});
 
 /* ---------- modos de greide ---------- */
 function genPivs(points){
@@ -692,7 +747,7 @@ else window.addEventListener('resize',()=>{ if(curTab==='perfil') resizeCv(); })
 function fitView(){
   view.fit=true;
   const xs=[], zs=[];
-  R.pts.forEach(p=>{ xs.push(p.x); ['le','ex','ld','g'].forEach(k=>{ if(p[k]!=null) zs.push(p[k]); }); });
+  R.pts.forEach(p=>{ xs.push(p.x); ['le','ex','ld','g','pLE','pLD'].forEach(k=>{ if(p[k]!=null) zs.push(p[k]); }); });
   if(S.mode!=='livre') S.pivs.forEach(p=>{xs.push(p.x);zs.push(p.z)});
   if(!xs.length||!W){view.ox=0;view.oz=0;view.sx=1;return}
   let x0=Math.min(...xs), x1=Math.max(...xs), z0=Math.min(...zs), z1=Math.max(...zs);
@@ -778,6 +833,7 @@ function draw(){
     frame(); return;
   }
   poly('le',COL.le,2,[]); poly('ex',COL.ex,1.5,[6,4]); poly('ld',COL.ld,2,[]);
+  if(+S.cfg.it){ poly('pLE',COL.gr,1.5,[4,4]); if(S.cfg.dLD!==S.cfg.dLE) poly('pLD',COL.gr,1.5,[4,4]); }
 
   const pv=S.pivs, xa=Math.min(R.pts.length?R.pts[0].x:Infinity,pv.length?pv[0].x:Infinity),
         xb=Math.max(R.pts.length?R.pts[R.pts.length-1].x:-Infinity,pv.length?pv[pv.length-1].x:-Infinity);
@@ -862,12 +918,13 @@ function legend(){
 function dragLabel(){
   const di=dragInfo, x=di.x;
   const g=S.mode==='livre'?di.g:gAtX(x);
-  const lines=[['Est. '+fe(x),'#000'],['Greide '+(g==null?'—':fmt(g,3)),COL.gr]];
+  const lines=[['Est. '+fe(x),'#000'],['Greide eixo '+(g==null?'—':fmt(g,3)),COL.gr]];
   if(di.piv&&S.mode==='curva') lines.push(['PIV '+fmt(di.piv.z,3),'#7a0050']);
-  [['LE','le'],['Eixo','ex'],['LD','ld']].forEach(([n,k])=>{
+  const it=(+S.cfg.it||0)/100;
+  [['LE','le',S.cfg.dLE],['Eixo','ex',0],['LD','ld',S.cfg.dLD]].forEach(([n,k,dd])=>{
     const t=terrAt(k,x); if(t==null||g==null) return;
-    const d=Math.round((g-t)*100)/100;
-    lines.push([n+' '+caTxt(g-t),d>0?'#0047d6':d<0?'#c40000':'#000']);
+    const v=g-it*(+dd||0)-t, d=Math.round(v*100)/100;
+    lines.push([n+' '+caTxt(v),d>0?'#0047d6':d<0?'#c40000':'#000']);
   });
   ctx.font='bold 14px system-ui,sans-serif';
   const w=Math.max(...lines.map(l=>ctx.measureText(l[0]).width))+16, h=lines.length*18+10;
@@ -1030,6 +1087,118 @@ $('#dpDel').onclick=()=>{
   $('#dlgPiv').close(); refresh(); save();
 };
 
+/* ---------- seções transversais ---------- */
+const sv=$('#sv'), sctx=sv.getContext('2d');
+let SW=0, SH=0, sdpr=1, secId=null, swipe=null;
+function resizeSv(){
+  const r=sv.getBoundingClientRect();
+  if(!r.width) return;
+  sdpr=window.devicePixelRatio||1; SW=r.width; SH=r.height;
+  sv.width=Math.round(SW*sdpr); sv.height=Math.round(SH*sdpr);
+  R=calcState(S); drawSec();
+}
+if(window.ResizeObserver) new ResizeObserver(()=>{ if(curTab==='sec') resizeSv(); }).observe(sv);
+else window.addEventListener('resize',()=>{ if(curTab==='sec') resizeSv(); });
+function curSec(){
+  const L=R.pts.filter(p=>p.g!=null);
+  let i=L.findIndex(p=>p.id===secId);
+  if(i<0&&L.length){i=0;secId=L[0].id}
+  return {L,i};
+}
+function stepSec(d){
+  const {L,i}=curSec();
+  if(!L.length) return;
+  secId=L[Math.max(0,Math.min(L.length-1,i+d))].id; drawSec();
+}
+$('#sPrev').onclick=()=>stepSec(-1);
+$('#sNext').onclick=()=>stepSec(1);
+$('#sSel').onchange=e=>{ secId=e.target.value; drawSec(); };
+sv.addEventListener('pointerdown',e=>{ swipe={x:e.clientX,y:e.clientY}; });
+sv.addEventListener('pointerup',e=>{
+  if(!swipe) return;
+  const dx=e.clientX-swipe.x, dy=e.clientY-swipe.y; swipe=null;
+  if(Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)*1.5) stepSec(dx<0?1:-1);
+});
+sv.addEventListener('pointercancel',()=>{swipe=null});
+function sText(t,x,y,color,align,font){
+  const c=sctx;
+  c.font=font||'bold 13px system-ui,sans-serif'; c.textAlign=align||'center'; c.textBaseline='middle';
+  c.lineWidth=4; c.strokeStyle='#fff'; c.strokeText(t,x,y);
+  c.fillStyle=color; c.fillText(t,x,y);
+}
+function drawSec(){
+  const {L,i}=curSec(), sel=$('#sSel');
+  const opts=L.map(p=>'<option value="'+p.id+'">Estaca '+esc(p.est)+'</option>').join('');
+  if(sel.dataset.k!==opts){ sel.innerHTML=opts; sel.dataset.k=opts; }
+  sel.value=secId||'';
+  $('#sPrev').disabled=i<=0; $('#sNext').disabled=i<0||i>=L.length-1;
+  if(!SW||!SH) return;
+  const c=sctx;
+  c.setTransform(sdpr,0,0,sdpr,0,0); c.fillStyle='#fff'; c.fillRect(0,0,SW,SH);
+  if(i<0){
+    sText('Sem dados — digite as cotas na aba Dados',SW/2,SH/2,'#333','center','15px system-ui,sans-serif');
+    $('#sInfo').innerHTML=''; return;
+  }
+  const p=L[i], dl=+S.cfg.dLE||0, dr=+S.cfg.dLD||0, ex=+S.cfg.sexag||1, it=+S.cfg.it||0;
+  const proj=[[-dl,p.pLE],[0,p.g],[dr,p.pLD]];
+  const terr=[[-dl,p.le],[0,p.ex],[dr,p.ld]].filter(q=>q[1]!=null);
+  const zs=proj.map(q=>q[1]).concat(terr.map(q=>q[1]));
+  let z0=Math.min(...zs), z1=Math.max(...zs);
+  if(z1-z0<0.2){const m=(z0+z1)/2;z0=m-0.1;z1=m+0.1}
+  const span=dl+dr, W0=Math.max(span,1), PL=22, PR=22, PT=58, PB=62;
+  const aw=SW-PL-PR, ah=SH-PT-PB, sx=Math.min(aw/W0,ah/((z1-z0)*ex)), sz=sx*ex;
+  const ox=PL+(aw-W0*sx)/2+dl*sx, zc=(z0+z1)/2, yc=PT+ah/2;
+  const X=x=>ox+x*sx, Y=z=>yc-(z-zc)*sz;
+  const tAt=x=>{
+    for(let k=0;k<terr.length-1;k++){
+      const a=terr[k], b=terr[k+1];
+      if(x>=a[0]-1e-9&&x<=b[0]+1e-9) return a[1]+(b[1]-a[1])*(x-a[0])/(b[0]-a[0]);
+    }
+    return null;
+  };
+  const pAt=x=>x<0?p.g+(p.g-p.pLE)*x/(dl||1):p.g-(p.g-p.pLD)*x/(dr||1);
+
+  // preenchimento de corte/aterro
+  const N=80;
+  for(let k=0;k<N&&span>0;k++){
+    const xa=-dl+span*k/N, xb=-dl+span*(k+1)/N, ta=tAt(xa), tb=tAt(xb);
+    if(ta==null||tb==null) continue;
+    const pa=pAt(xa), pb=pAt(xb);
+    c.fillStyle=(pa-ta)+(pb-tb)>0?'rgba(0,71,214,.28)':'rgba(196,0,0,.28)';
+    c.beginPath(); c.moveTo(X(xa),Y(ta)); c.lineTo(X(xb),Y(tb)); c.lineTo(X(xb),Y(pb)); c.lineTo(X(xa),Y(pa)); c.closePath(); c.fill();
+  }
+  // eixo
+  c.strokeStyle='#777'; c.lineWidth=1; c.setLineDash([6,4]);
+  c.beginPath(); c.moveTo(X(0),PT-6); c.lineTo(X(0),SH-PB+4); c.stroke(); c.setLineDash([]);
+  // terreno
+  c.strokeStyle='#7a4a00'; c.lineWidth=2.5; c.beginPath();
+  terr.forEach((q,k)=>k?c.lineTo(X(q[0]),Y(q[1])):c.moveTo(X(q[0]),Y(q[1]))); c.stroke();
+  terr.forEach(q=>{ c.beginPath(); c.arc(X(q[0]),Y(q[1]),4,0,7); c.fillStyle='#7a4a00'; c.fill(); });
+  // projeto
+  c.strokeStyle=COL.gr; c.lineWidth=4; c.beginPath();
+  proj.forEach((q,k)=>k?c.lineTo(X(q[0]),Y(q[1])):c.moveTo(X(q[0]),Y(q[1]))); c.stroke();
+  proj.forEach(q=>{ c.fillStyle=COL.gr; c.fillRect(X(q[0])-5,Y(q[1])-5,10,10); });
+  // inclinações
+  if(dl>0) sText('◄ '+fmt(it,2)+'%',X(-dl/2),Y(pAt(-dl/2))-16,'#7a0050');
+  if(dr>0) sText(fmt(it,2)+'% ►',X(dr/2),Y(pAt(dr/2))-16,'#7a0050');
+  // faixas de rótulos
+  const cols=[[-dl,'left',p.pLE,p.le,p.dLE],[0,'center',p.g,p.ex,p.dEX],[dr,'right',p.pLD,p.ld,p.dLD]];
+  cols.forEach(([x,al,zp,zt,d])=>{
+    const px=al==='left'?Math.max(4,X(x)-6):al==='right'?Math.min(SW-4,X(x)+6):X(x);
+    sText(fmt(zp,3),px,PT-14,COL.gr,al);
+    if(zt!=null) sText(fmt(zt,3),px,SH-PB+18,'#7a4a00',al);
+    if(d!=null){ const r=Math.round(d*100)/100; sText(caTxt(d),px,SH-PB+38,r>0?'#0047d6':r<0?'#c40000':'#000',al); }
+  });
+  if(dl>0) sText(fmt(dl,2)+' m',X(-dl/2),SH-10,'#333','center','12px system-ui,sans-serif');
+  if(dr>0) sText(fmt(dr,2)+' m',X(dr/2),SH-10,'#333','center','12px system-ui,sans-serif');
+  sText('Estaca '+p.est,6,16,'#000','left','bold 16px system-ui,sans-serif');
+  sText('V '+fmt(ex,0)+'x',SW-6,16,'#333','right','12px system-ui,sans-serif');
+
+  const f3=v=>v==null?'—':fmt(v,3);
+  $('#sInfo').innerHTML='<table><tr><th></th><th>Terreno</th><th>Projeto</th><th>C/A</th></tr>'+
+    [['LE',p.le,p.pLE,p.dLE],['Eixo',p.ex,p.g,p.dEX],['LD',p.ld,p.pLD,p.dLD]].map(([n,t,z,d])=>'<tr><td>'+n+'</td><td>'+f3(t)+'</td><td>'+f3(z)+'</td>'+caTd(d)+'</tr>').join('')+'</table>';
+}
+
 /* ---------- arquivos ---------- */
 $('#bCsv').onclick=()=>{
   R=calcState(S);
@@ -1068,7 +1237,7 @@ $('#bNew').onclick=()=>{
 renderGrid(); syncCfgUI(); updUndo();
 R=calcState(S); renderRes();
 let t0=null; try{t0=localStorage.getItem(KEY+'_tab')}catch(e){}
-showTab(['dados','perfil','arq'].includes(t0)?t0:(R.pts.length?'perfil':'dados'));
+showTab(['dados','perfil','sec','arq'].includes(t0)?t0:(R.pts.length?'perfil':'dados'));
 
 if(/^https?:$/.test(location.protocol)){
   const l=document.createElement('link'); l.rel='manifest'; l.href='manifest.json'; document.head.appendChild(l);
