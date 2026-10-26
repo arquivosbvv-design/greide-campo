@@ -55,6 +55,8 @@ table{border-collapse:collapse}
 #cv{display:block;width:100%;height:52vh;min-height:260px;max-height:560px;touch-action:none;background:#fff}
 .reswrap{overflow:auto;max-height:46vh;border:2px solid #000;border-radius:6px;margin-top:10px}
 #res{min-width:780px;width:100%;font-size:15px}
+#vol{font-size:15px;color:#000;background:#f3f6fc;border:2px solid #b9c7e6;border-radius:8px;padding:8px 10px}
+#vol:empty{display:none}
 select{font:inherit;font-size:18px;font-weight:700;min-height:44px;padding:4px 8px;border:2px solid #666;border-radius:6px;background:#fff;color:#000;flex:1;min-width:0}
 .secnav{flex-wrap:nowrap}
 .secnav button{flex:none;width:56px}
@@ -114,14 +116,23 @@ dialog h2{margin:0 0 8px;font-size:19px}
       <label>Eixo → bordo LE (m)<input id="cDle" inputmode="decimal" autocomplete="off"></label>
       <label>Eixo → bordo LD (m)<input id="cDld" inputmode="decimal" autocomplete="off"></label>
     </div>
-    <div class="row"><label>Inclinação transversal (%)<input id="cIt" inputmode="decimal" autocomplete="off"></label></div>
-    <p class="hint">Caimento do eixo para os dois bordos: cota do bordo = greide do eixo − inclinação × distância. Use 0 para pista plana.</p>
+    <div class="row">
+      <label>Inclinação transversal (%)<input id="cIt" inputmode="decimal" autocomplete="off"></label>
+      <label>Fator de compactação<input id="cFator" inputmode="decimal" autocomplete="off"></label>
+    </div>
+    <p class="hint">Caimento do eixo para os dois bordos: cota do bordo = greide do eixo − inclinação × distância. Use 0 para pista plana. Fator: m³ de corte necessários para cada m³ de aterro (ex.: 1,25; 1 = sem fator).</p>
+    <div class="row"><label class="chk"><input type="checkbox" id="cUseOff"> Pontos extras (offsets)</label></div>
+    <div class="row" id="offRow">
+      <label>Offset LE (m do eixo)<input id="cOle" inputmode="decimal" autocomplete="off"></label>
+      <label>Offset LD (m do eixo)<input id="cOld" inputmode="decimal" autocomplete="off"></label>
+    </div>
+    <p class="hint" id="offHint">Offset dentro da pista só melhora o terreno; fora da pista, o pavimento é prolongado com o mesmo caimento até ele.</p>
   </details>
 
   <div class="gridwrap">
     <table id="grid">
-      <colgroup><col style="width:34px"><col style="width:27%"><col><col><col></colgroup>
-      <thead><tr><th>#</th><th>Estaca</th><th>Cota LE</th><th>Eixo</th><th>Cota LD</th></tr></thead>
+      <colgroup id="gcol"></colgroup>
+      <thead id="gh"></thead>
       <tbody id="gb"></tbody>
     </table>
   </div>
@@ -134,7 +145,7 @@ dialog h2{margin:0 0 8px;font-size:19px}
   </div>
   <div class="row"><button id="bImp">Importar arquivo da coletora (TXT/CSV)</button></div>
   <input type="file" id="fImp" accept=".txt,.csv,.tsv,text/plain,text/csv" hidden>
-  <p class="hint">Formatos aceitos: <b>Estaca;LE;Eixo;LD</b> (ou Estaca;LE;LD), separador ; , ou tab — ou <b>PNEZD</b> com a descrição D = E12_LE, E12_LD, E12_EX.</p>
+  <p class="hint">Formatos aceitos: <b>Estaca;LE;Eixo;LD</b> (ou Estaca;LE;LD, ou com offsets Estaca;OffLE;LE;Eixo;LD;OffLD), separador ; , ou tab — ou <b>PNEZD</b> com a descrição D = E12_LE, E12_LD, E12_EX, E12_OLE, E12_OLD.</p>
 </section>
 
 <section id="p-perfil" hidden>
@@ -150,6 +161,9 @@ dialog h2{margin:0 0 8px;font-size:19px}
     <button id="bMedia">Voltar à média</button>
     <label style="flex:0 1 96px">Exagero V<input id="cExag" inputmode="decimal" autocomplete="off"></label>
   </div>
+  <div class="row"><button id="bOpt" class="on">Otimizar greide (corte = aterro)</button></div>
+  <p class="hint">Mantém as estacas dos PIVs e ajusta as cotas. Menos PIVs = greide mais suave: aumente a tolerância e toque em Regerar PIVs, ou apague PIVs, e otimize de novo.</p>
+  <div id="vol" class="hint"></div>
   <div class="row" id="pivRow">
     <label style="flex:1 1 90px">Tolerância (m)<input id="cTol" inputmode="decimal" autocomplete="off"></label>
     <button id="bRegen">Regerar PIVs</button>
@@ -158,7 +172,7 @@ dialog h2{margin:0 0 8px;font-size:19px}
   </div>
   <div class="reswrap" id="reswrap">
     <table id="res">
-      <thead><tr><th>Estaca</th><th>Terr. LE</th><th>Terr. Eixo</th><th>Terr. LD</th><th>Greide eixo</th><th>Proj. LE</th><th>Proj. LD</th><th>LE C/A</th><th>Eixo C/A</th><th>LD C/A</th></tr></thead>
+      <thead id="rh"></thead>
       <tbody id="rb"></tbody>
     </table>
   </div>
@@ -337,7 +351,10 @@ function calcState(st){
   const c=st.cfg, dists=computeDists(st.rows,c);
   const ci=st.mode==='curva'?curveInfo(st.pivs,c.Ldef):null;
   const it=(+c.it||0)/100;
-  const rows=st.rows.map((r,i)=>({id:r.id,i,x:dists[i],est:dists[i]==null?'?':fmtEst(dists[i],c.interval),le:r.le,ex:r.ex,ld:r.ld,m:mediaOf(r,c),g:null,pLE:null,pLD:null,dLE:null,dEX:null,dLD:null}));
+  const off=!!c.useOff;
+  const rows=st.rows.map((r,i)=>({id:r.id,i,x:dists[i],est:dists[i]==null?'?':fmtEst(dists[i],c.interval),le:r.le,ex:r.ex,ld:r.ld,
+    ole:off?r.ole:null,old:off?r.old:null,m:mediaOf(r,c),g:null,pLE:null,pLD:null,pOLE:null,pOLD:null,
+    dLE:null,dEX:null,dLD:null,dOLE:null,dOLD:null,fill:0,cut:0,geo:null}));
   const df=(g,t)=>(g==null||t==null)?null:g-t;
   rows.forEach(r=>{
     if(r.x==null) return;
@@ -345,46 +362,162 @@ function calcState(st){
     if(r.g==null) return;
     r.pLE=r.g-it*(+c.dLE||0); r.pLD=r.g-it*(+c.dLD||0);
     r.dLE=df(r.pLE,r.le); r.dEX=df(r.g,r.ex); r.dLD=df(r.pLD,r.ld);
+    if(off){ r.pOLE=r.g-it*(+c.oLE||0); r.pOLD=r.g-it*(+c.oLD||0); r.dOLE=df(r.pOLE,r.ole); r.dOLD=df(r.pOLD,r.old); }
+    r.geo=secGeom(r,c);
+    const a=secAreas(r.geo,r.g,it); r.fill=a.fill; r.cut=a.cut;
   });
-  const pts=rows.filter(r=>r.x!=null&&(r.le!=null||r.ex!=null||r.ld!=null)).sort((a,b)=>a.x-b.x);
-  return {rows,pts,ci};
+  const pts=rows.filter(r=>r.x!=null&&(r.le!=null||r.ex!=null||r.ld!=null||r.ole!=null||r.old!=null)).sort((a,b)=>a.x-b.x);
+  return {rows,pts,ci,vol:volumes(pts.filter(p=>p.g!=null))};
 }
-function buildCSV(rows){
-  const f3=v=>v==null?'':fmt(v,3);
-  const L=['Estaca;Terreno LE;Terreno Eixo;Terreno LD;Greide eixo;Projeto LE;Projeto LD;LE C/A;Eixo C/A;LD C/A'];
-  rows.forEach(r=>L.push([r.est,f3(r.le),f3(r.ex),f3(r.ld),f3(r.g),f3(r.pLE),f3(r.pLD),caTxt(r.dLE),caTxt(r.dEX),caTxt(r.dLD)].join(';')));
+// pontos de terreno da seção (x = distância ao eixo, negativo à esquerda) e extensão do pavimento
+function secGeom(r,c){
+  const off=!!c.useOff, dl=+c.dLE||0, dr=+c.dLD||0, ol=+c.oLE||0, or=+c.oLD||0;
+  const t=[[-dl,r.le],[0,r.ex],[dr,r.ld]];
+  if(off){ t.push([-ol,r.ole]); t.push([or,r.old]); }
+  const terr=t.filter(q=>q[1]!=null).sort((a,b)=>a[0]-b[0]);
+  return {terr,xl:-(off?Math.max(dl,ol):dl),xr:off?Math.max(dr,or):dr};
+}
+function terrAtSec(terr,x){
+  for(let k=0;k<terr.length-1;k++){
+    const a=terr[k], b=terr[k+1];
+    if(x>=a[0]-1e-9&&x<=b[0]+1e-9) return b[0]-a[0]<1e-9?b[1]:a[1]+(b[1]-a[1])*(x-a[0])/(b[0]-a[0]);
+  }
+  return null;
+}
+// áreas de aterro e corte (m²) entre pavimento e terreno, só onde os dois existem
+function secAreas(geo,g,it){
+  const z={fill:0,cut:0,w:0};
+  if(!geo||g==null||geo.terr.length<2) return z;
+  const T=geo.terr, a=Math.max(geo.xl,T[0][0]), b=Math.min(geo.xr,T[T.length-1][0]);
+  if(b-a<1e-9) return z;
+  const xs=[a,b,0].concat(T.map(q=>q[0])).filter(x=>x>=a-1e-9&&x<=b+1e-9).sort((p,q)=>p-q);
+  const h=x=>g-it*Math.abs(x)-terrAtSec(T,x);
+  for(let k=0;k<xs.length-1;k++){
+    const x0=xs[k], x1=xs[k+1], L=x1-x0;
+    if(L<1e-9) continue;
+    const h0=h(x0), h1=h(x1);
+    if(h0>=0&&h1>=0) z.fill+=(h0+h1)/2*L;
+    else if(h0<=0&&h1<=0) z.cut-=(h0+h1)/2*L;
+    else {
+      const xm=L*h0/(h0-h1);
+      if(h0>0){z.fill+=h0*xm/2;z.cut-=h1*(L-xm)/2}
+      else{z.cut-=h0*xm/2;z.fill+=h1*(L-xm)/2}
+    }
+  }
+  z.w=b-a;
+  return z;
+}
+// volumes pelo método das áreas médias entre estacas consecutivas
+function volumes(pts){
+  const v={cut:0,fill:0};
+  for(let k=0;k<pts.length-1;k++){
+    const a=pts[k], b=pts[k+1], L=Math.abs(b.x-a.x);
+    v.cut+=(a.cut+b.cut)/2*L; v.fill+=(a.fill+b.fill)/2*L;
+  }
+  return v;
+}
+// cota do eixo em que a seção sozinha compensa: corte = fator × aterro
+function balancedG(geo,it,F){
+  if(!geo||geo.terr.length<2) return null;
+  const zs=geo.terr.map(q=>q[1]);
+  let lo=Math.min(...zs)-50, hi=Math.max(...zs)+50;
+  if(secAreas(geo,lo,it).w<=0) return null;
+  for(let n=0;n<60;n++){
+    const m=(lo+hi)/2, a=secAreas(geo,m,it);
+    if(a.cut-F*a.fill>0) lo=m; else hi=m;
+  }
+  return (lo+hi)/2;
+}
+function solveLin(A,b){
+  const n=b.length, M=A.map((r,i)=>r.concat([b[i]]));
+  for(let c=0;c<n;c++){
+    let p=c;
+    for(let r=c+1;r<n;r++) if(Math.abs(M[r][c])>Math.abs(M[p][c])) p=r;
+    if(Math.abs(M[p][c])<1e-12) return null;
+    [M[c],M[p]]=[M[p],M[c]];
+    for(let r=0;r<n;r++){
+      if(r===c) continue;
+      const f=M[r][c]/M[c][c];
+      for(let k=c;k<=n;k++) M[r][k]-=f*M[c][k];
+    }
+  }
+  return M.map((r,i)=>r[n]/r[i]);
+}
+// mantém as estacas dos PIVs, ajusta as cotas (mínimos quadrados contra a cota de compensação de cada seção)
+// e depois desloca o greide inteiro até corte = fator × aterro no trecho, deixando sobra de corte se não fechar exato
+function optimizeGreide(st){
+  const c=st.cfg, it=(+c.it||0)/100, F=(+c.fator>0)?+c.fator:1;
+  const pv=st.pivs, n=pv.length;
+  if(n<2) return null;
+  const R0=calcState(st), P=R0.pts.filter(p=>p.geo&&p.geo.terr.length>=2);
+  const obs=[];
+  P.forEach((p,k)=>{
+    const gb=balancedG(p.geo,it,F);
+    if(gb==null) return;
+    const L=((k>0?p.x-P[k-1].x:0)+(k<P.length-1?P[k+1].x-p.x:0))/2||1;
+    obs.push({x:p.x,gb,w:Math.max(secAreas(p.geo,gb,it).w,0.1)*L});
+  });
+  if(obs.length<2) return null;
+  const mk=zv=>pv.map((p,j)=>({x:p.x,z:zv[j],L:p.L}));
+  const ev=(zv,x)=>st.mode==='curva'?evalCurve(mk(zv),x,c.Ldef):evalLinear(mk(zv),x);
+  const B=obs.map(o=>pv.map((_,j)=>ev(pv.map((__,k)=>k===j?1:0),o.x)));
+  const A=pv.map(()=>pv.map(()=>0)), b=pv.map(()=>0);
+  obs.forEach((o,i)=>{ for(let j=0;j<n;j++){ b[j]+=o.w*B[i][j]*o.gb; for(let k=0;k<n;k++) A[j][k]+=o.w*B[i][j]*B[i][k]; } });
+  const lam=1e-6*Math.max(1e-9,A.reduce((s,r,j)=>s+r[j],0)/n);
+  for(let j=0;j<n;j++){ A[j][j]+=lam; b[j]+=lam*pv[j].z; }
+  let z=solveLin(A,b);
+  if(!z) return null;
+  const phi=zv=>{ const v=calcState(Object.assign({},st,{pivs:mk(zv)})).vol; return v.cut-F*v.fill; };
+  let lo=-50, hi=50;
+  for(let k=0;k<50;k++){ const m=(lo+hi)/2; if(phi(z.map(v=>v+m))>0) lo=m; else hi=m; }
+  const d=(lo+hi)/2;
+  z=z.map(v=>Math.round((v+d)*1000)/1000);
+  for(let k=0;k<30&&phi(z)<0;k++) z=z.map(v=>Math.round((v-0.001)*1000)/1000);
+  const pivs=mk(z);
+  return {pivs,vol:calcState(Object.assign({},st,{pivs})).vol,F};
+}
+function buildCSV(rows,off){
+  const f3=v=>v==null?'':fmt(v,3), f2=v=>v==null?'':fmt(v,2);
+  const L=['Estaca;Terreno LE;Terreno Eixo;Terreno LD;Greide eixo;Projeto LE;Projeto LD;LE C/A;Eixo C/A;LD C/A'+
+    (off?';Terreno Off LE;Terreno Off LD;Projeto Off LE;Projeto Off LD;Off LE C/A;Off LD C/A':'')+';Área corte (m²);Área aterro (m²)'];
+  rows.forEach(r=>L.push([r.est,f3(r.le),f3(r.ex),f3(r.ld),f3(r.g),f3(r.pLE),f3(r.pLD),caTxt(r.dLE),caTxt(r.dEX),caTxt(r.dLD)]
+    .concat(off?[f3(r.ole),f3(r.old),f3(r.pOLE),f3(r.pOLD),caTxt(r.dOLE),caTxt(r.dOLD)]:[])
+    .concat([r.g==null?'':f2(r.cut),r.g==null?'':f2(r.fill)]).join(';')));
   return '﻿'+L.join('\r\n')+'\r\n';
 }
 function parseImport(text,interval){
   const out=[], bad=[], warn=[], byKey=new Map();
   let nA=0, nB=0;
-  const reB=/^E?\s*(-?\d+(?:\s*\+\s*\d+(?:[.,]\d+)?)?)\s*[_\-\s]?\s*(LE|LD|EX|EIXO|CL)$/i;
+  const reB=/^E?\s*(-?\d+(?:\s*\+\s*\d+(?:[.,]\d+)?)?)\s*[_\-\s]?\s*(OLE|OLD|LE|LD|EX|EIXO|CL)$/i;
+  const KB={OLE:'ole',OLD:'old',LE:'le',LD:'ld'};
   text.split(/\r\n|\n|\r/).forEach((ln,idx)=>{
     const t=ln.trim(), n=idx+1;
     if(!t) return;
     const sep=t.indexOf('\t')>=0?'\t':(t.indexOf(';')>=0?';':',');
     const f=t.split(sep).map(s=>s.trim());
-    if(f.length>=5){
-      const desc=f.slice(4).join(' ').trim(), m=desc.match(reB), z=parseNum(f[3]);
+    const descB=f.length>=5?f.slice(4).join(' ').trim():'';
+    if(f.length>=5&&!(f.length===6&&!reB.test(descB))){
+      const desc=descB, m=desc.match(reB), z=parseNum(f[3]);
       if(!m){bad.push({n,t,why:'descrição sem estaca/lado (ex.: E12_LE)'});return}
       if(z==null){bad.push({n,t,why:'cota Z inválida'});return}
       const est=m[1].replace(/\s/g,''), x=parseEst(est,interval);
       if(x==null){bad.push({n,t,why:'estaca inválida'});return}
-      const side=m[2].toUpperCase(), k=side==='LE'?'le':side==='LD'?'ld':'ex';
+      const side=m[2].toUpperCase(), k=KB[side]||'ex';
       const key=x.toFixed(3);
       let row=byKey.get(key);
-      if(!row){row={x,le:null,ex:null,ld:null};byKey.set(key,row);out.push(row)}
+      if(!row){row={x,le:null,ex:null,ld:null,ole:null,old:null};byKey.set(key,row);out.push(row)}
       if(row[k]!=null) warn.push('Linha '+n+': '+est+' '+side+' repetido — usado o último valor');
       row[k]=z; nB++;
       return;
     }
-    if(f.length===3||f.length===4){
+    if(f.length===3||f.length===4||f.length===6){
       const x=parseEst(f[0],interval);
       if(x==null){bad.push({n,t,why:(nA+nB===0)?'cabeçalho ou estaca inválida':'estaca inválida'});return}
-      const vals=f.length===4?[f[1],f[2],f[3]]:[f[1],'',f[2]], nums=vals.map(parseNum);
+      // ordem: le, ex, ld, ole, old
+      const vals=f.length===6?[f[2],f[3],f[4],f[1],f[5]]:f.length===4?[f[1],f[2],f[3],'','']:[f[1],'',f[2],'',''], nums=vals.map(parseNum);
       if(vals.some((s,i)=>s!==''&&nums[i]==null)){bad.push({n,t,why:'cota inválida'});return}
       if(nums.every(v=>v==null)){bad.push({n,t,why:'sem cotas'});return}
-      const row={x,le:nums[0],ex:nums[1],ld:nums[2]}, key=x.toFixed(3);
+      const row={x,le:nums[0],ex:nums[1],ld:nums[2],ole:nums[3],old:nums[4]}, key=x.toFixed(3);
       if(byKey.has(key)){Object.assign(byKey.get(key),row);warn.push('Linha '+n+': estaca repetida — usado o último valor')}
       else{byKey.set(key,row);out.push(row)}
       nA++;
@@ -392,6 +525,7 @@ function parseImport(text,interval){
     }
     bad.push({n,t,why:'formato não reconhecido'});
   });
+  out.forEach(r=>{ if(r.ole===undefined) r.ole=null; if(r.old===undefined) r.old=null; });
   return {rows:out,bad,warn,fmt:nA&&nB?'misto':nA?'Estaca;LE;Eixo;LD':nB?'PNEZD':''};
 }
 /*CORE-END*/
@@ -405,7 +539,7 @@ const HINT={
   curva:'Igual a PIVs, com curva vertical em cada PIV. Toque no PIV para mudar o L.'
 };
 const rid=()=>Math.random().toString(36).slice(2,10);
-const newRow=est=>({id:rid(),est:est||'',manual:!!est,le:null,ex:null,ld:null});
+const newRow=est=>({id:rid(),est:est||'',manual:!!est,le:null,ex:null,ld:null,ole:null,old:null});
 const numOrNull=v=>(v==null||v===''||!isFinite(v))?null:+v;
 const round3=v=>Math.round(v*1000)/1000;
 const fe=d=>fmtEst(d,S.cfg.interval);
@@ -413,7 +547,7 @@ const fmtIn=v=>v==null?'':String(+v.toFixed(4)).replace('.',',');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 function defState(){
-  return {cfg:{start:'0',interval:20,dir:1,incEixo:false,exag:10,tol:0.10,Ldef:40,dLE:3.5,dLD:3.5,it:2,sexag:5},
+  return {cfg:{start:'0',interval:20,dir:1,incEixo:false,exag:10,tol:0.10,Ldef:40,dLE:3.5,dLD:3.5,it:2,sexag:5,fator:1,useOff:false,oLE:4.5,oLD:4.5},
     rows:[0,0,0,0,0].map(()=>newRow()),mode:'livre',free:{},pivs:[]};
 }
 function normState(o){
@@ -421,7 +555,7 @@ function normState(o){
   if(!o||!Array.isArray(o.rows)) throw new Error('arquivo inválido');
   const s={
     cfg:Object.assign(d.cfg,o.cfg||{}),
-    rows:o.rows.map(r=>({id:r.id||rid(),est:r.est||'',manual:!!r.manual,le:numOrNull(r.le),ex:numOrNull(r.ex),ld:numOrNull(r.ld)})),
+    rows:o.rows.map(r=>({id:r.id||rid(),est:r.est||'',manual:!!r.manual,le:numOrNull(r.le),ex:numOrNull(r.ex),ld:numOrNull(r.ld),ole:numOrNull(r.ole),old:numOrNull(r.old)})),
     mode:['livre','piv','curva'].includes(o.mode)?o.mode:'livre',
     free:(o.free&&typeof o.free==='object')?o.free:{},
     pivs:Array.isArray(o.pivs)?o.pivs.filter(p=>isFinite(p.x)&&isFinite(p.z)).map(p=>({x:+p.x,z:+p.z,L:isFinite(p.L)&&p.L>0?+p.L:d.cfg.Ldef})).sort((a,b)=>a.x-b.x):[]
@@ -498,6 +632,8 @@ function syncCfgUI(){
   $('#cEixo').checked=!!c.incEixo;
   $('#cExag').value=fmtIn(c.exag); $('#cTol').value=fmtIn(c.tol); $('#cLdef').value=fmtIn(c.Ldef);
   $('#cDle').value=fmtIn(c.dLE); $('#cDld').value=fmtIn(c.dLD); $('#cIt').value=fmtIn(c.it); $('#cSexag').value=fmtIn(c.sexag);
+  $('#cFator').value=fmtIn(c.fator); $('#cUseOff').checked=!!c.useOff; $('#cOle').value=fmtIn(c.oLE); $('#cOld').value=fmtIn(c.oLD);
+  $('#offRow').hidden=$('#offHint').hidden=!c.useOff;
   document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.m===S.mode));
   $('#mHint').textContent=HINT[S.mode];
   $('#pivRow').hidden=S.mode==='livre';
@@ -521,7 +657,9 @@ $('#cExag').onchange=e=>{
   if(view.fit) fitView(); else if(H) view.oz=zc-((H-PAD.b)-(PAD.t+H-PAD.b)/2)/(view.sx*v);
   draw();
 };
-[['#cDle','dLE',v=>v>=0],['#cDld','dLD',v=>v>=0],['#cIt','it',v=>v!=null&&Math.abs(v)<=50]].forEach(([sel,k,ok])=>{
+$('#cUseOff').onchange=e=>{ commit(); S.cfg.useOff=e.target.checked; syncCfgUI(); renderGrid(); refresh(); save(); };
+[['#cDle','dLE',v=>v>=0],['#cDld','dLD',v=>v>=0],['#cIt','it',v=>v!=null&&Math.abs(v)<=50],
+ ['#cOle','oLE',v=>v>=0],['#cOld','oLD',v=>v>=0],['#cFator','fator',v=>v>0&&v<=5]].forEach(([sel,k,ok])=>{
   $(sel).onchange=e=>{
     const v=parseNum(e.target.value);
     if(!ok(v)){toast('Valor inválido');syncCfgUI();return}
@@ -533,13 +671,19 @@ $('#cTol').onchange=e=>{ const v=parseNum(e.target.value); if(v>=0){S.cfg.tol=v;
 $('#cLdef').onchange=e=>{ const v=parseNum(e.target.value); if(v>0){S.cfg.Ldef=v;save()} syncCfgUI(); };
 
 /* ---------- grade de digitação ---------- */
-const KEYS=['est','le','ex','ld'];
+let KEYS=['est','le','ex','ld'];
+const KNAME={le:'Cota LE',ex:'Eixo',ld:'Cota LD',ole:'Off LE',old:'Off LD'};
 function renderGrid(){
+  const off=!!S.cfg.useOff;
+  KEYS=off?['est','ole','le','ex','ld','old']:['est','le','ex','ld'];
+  $('#gcol').innerHTML='<col style="width:34px"><col style="width:'+(off?'78px':'27%')+'">'+KEYS.slice(1).map(()=>'<col>').join('');
+  $('#gh').innerHTML='<tr><th>#</th><th>Estaca</th>'+KEYS.slice(1).map(k=>'<th>'+KNAME[k]+'</th>').join('')+'</tr>';
+  $('#grid').style.minWidth=off?'470px':'';
   const gb=$('#gb'); let h='';
   S.rows.forEach((r,i)=>{
     h+='<tr'+(i===sel?' class="sel"':'')+'><td class="n" data-r="'+i+'">'+(i+1)+'</td>'+
       '<td><input class="est" data-r="'+i+'" data-c="0" enterkeyhint="next" autocomplete="off" spellcheck="false"></td>'+
-      [1,2,3].map(c=>'<td><input data-r="'+i+'" data-c="'+c+'" inputmode="decimal" enterkeyhint="next" autocomplete="off" value="'+fmtIn(r[KEYS[c]])+'"></td>').join('')+'</tr>';
+      KEYS.slice(1).map((k,j)=>'<td><input data-r="'+i+'" data-c="'+(j+1)+'" inputmode="decimal" enterkeyhint="next" autocomplete="off" value="'+fmtIn(r[k])+'"></td>').join('')+'</tr>';
   });
   gb.innerHTML=h;
   updEst();
@@ -584,7 +728,7 @@ gb.addEventListener('keydown',e=>{
   if(e.key!=='Enter'||e.target.tagName!=='INPUT') return;
   e.preventDefault();
   let r=+e.target.dataset.r, c=+e.target.dataset.c;
-  if(c<3) c++; else {r++;c=1}
+  if(c<KEYS.length-1) c++; else {r++;c=1}
   if(r>=S.rows.length) addRow();
   focusCell(r,c);
 });
@@ -652,7 +796,8 @@ $('#impNo').onclick=()=>$('#dlgImp').close();
 $('#impOk').onclick=()=>{
   if(!impPending||!impPending.rows.length) return;
   commit();
-  S.rows=impPending.rows.map(r=>Object.assign(newRow(fe(r.x)),{le:r.le,ex:r.ex,ld:r.ld}));
+  S.rows=impPending.rows.map(r=>Object.assign(newRow(fe(r.x)),{le:r.le,ex:r.ex,ld:r.ld,ole:r.ole,old:r.old}));
+  if(impPending.rows.some(r=>r.ole!=null||r.old!=null)&&!S.cfg.useOff){ S.cfg.useOff=true; syncCfgUI(); toast('Offsets ativados — confira as distâncias na aba Dados'); }
   S.free={}; S.pivs=[]; sel=-1;
   $('#dlgImp').close(); view.fit=true;
   renderGrid(); refresh(); save();
@@ -667,18 +812,45 @@ function caTd(d){
   return '<td'+(r>0?' class="A"':r<0?' class="C"':'')+'>'+caTxt(d)+'</td>';
 }
 function renderRes(){
-  const f3=v=>v==null?'—':fmt(v,3);
+  const f3=v=>v==null?'—':fmt(v,3), off=!!S.cfg.useOff;
+  const hk='<tr><th>Estaca</th><th>Terr. LE</th><th>Terr. Eixo</th><th>Terr. LD</th><th>Greide eixo</th><th>Proj. LE</th><th>Proj. LD</th><th>LE C/A</th><th>Eixo C/A</th><th>LD C/A</th>'+
+    (off?'<th>Off LE C/A</th><th>Off LD C/A</th>':'')+'<th>Corte m²</th><th>Aterro m²</th></tr>';
+  if($('#rh').dataset.k!==hk){ $('#rh').innerHTML=hk; $('#rh').dataset.k=hk; $('#res').style.minWidth=off?'1060px':'920px'; }
   let h='';
   for(const r of R.rows){
-    h+='<tr data-id="'+r.id+'"'+(r.id===hlId?' class="hl"':'')+'><td>'+esc(r.est)+'</td><td>'+f3(r.le)+'</td><td>'+f3(r.ex)+'</td><td>'+f3(r.ld)+'</td><td><b>'+f3(r.g)+'</b></td><td>'+f3(r.pLE)+'</td><td>'+f3(r.pLD)+'</td>'+caTd(r.dLE)+caTd(r.dEX)+caTd(r.dLD)+'</tr>';
+    h+='<tr data-id="'+r.id+'"'+(r.id===hlId?' class="hl"':'')+'><td>'+esc(r.est)+'</td><td>'+f3(r.le)+'</td><td>'+f3(r.ex)+'</td><td>'+f3(r.ld)+'</td><td><b>'+f3(r.g)+'</b></td><td>'+f3(r.pLE)+'</td><td>'+f3(r.pLD)+'</td>'+caTd(r.dLE)+caTd(r.dEX)+caTd(r.dLD)+
+      (off?caTd(r.dOLE)+caTd(r.dOLD):'')+
+      '<td class="C">'+(r.g==null?'—':fmt(r.cut,2))+'</td><td class="A">'+(r.g==null?'—':fmt(r.fill,2))+'</td></tr>';
   }
   $('#rb').innerHTML=h;
+  renderVol();
   if(hlId){
     const tr=$('#rb tr.hl'), w=$('#reswrap');
     if(tr&&(tr.offsetTop<w.scrollTop+34||tr.offsetTop+tr.offsetHeight>w.scrollTop+w.clientHeight))
       w.scrollTop=tr.offsetTop-w.clientHeight/2;
   }
 }
+function renderVol(){
+  const v=R.vol, F=(+S.cfg.fator>0)?+S.cfg.fator:1;
+  if(!v||(v.cut<=0&&v.fill<=0)){ $('#vol').innerHTML=''; return; }
+  const s=v.cut-F*v.fill;
+  const saldo=Math.abs(s)<0.05?'<b>compensado</b>':s>0?'sobra <b class="C">'+fmt(s,1)+' m³</b> de corte':'falta <b class="C">'+fmt(-s,1)+' m³</b> de corte (sobra aterro)';
+  $('#vol').innerHTML='Corte <b class="C">'+fmt(v.cut,1)+' m³</b> · Aterro <b class="A">'+fmt(v.fill,1)+' m³</b>'+
+    (F!==1?' (× '+fmt(F,2)+' = '+fmt(F*v.fill,1)+' m³)':'')+'<br>Saldo: '+saldo;
+}
+$('#bOpt').onclick=()=>{
+  R=calcState(S);
+  if(R.pts.filter(p=>p.g!=null).length<2){ toast('Precisa de pelo menos 2 estacas com cotas'); return; }
+  const before=snap();
+  if(S.mode==='livre'){ S.pivs=genPivs(R.pts.map(p=>({x:p.x,z:p.m}))); S.mode='piv'; }
+  else if(S.pivs.length<2) S.pivs=genPivs(R.pts.map(p=>({x:p.x,z:p.g})));
+  const res=optimizeGreide(S);
+  if(!res){ S=JSON.parse(before); toast('Não foi possível otimizar: faltam seções com 2 ou mais pontos de terreno'); return; }
+  pushUndo(before);
+  S.pivs=res.pivs; view.fit=true;
+  syncCfgUI(); refreshNow(); if(W) {fitView();draw();} save();
+  toast('Greide otimizado com '+S.pivs.length+' PIVs');
+};
 let rq=false;
 function refresh(){ if(rq) return; rq=true; requestAnimationFrame(()=>{rq=false;refreshNow()}); }
 function refreshNow(){ R=calcState(S); renderRes(); draw(); if(curTab==='sec') drawSec(); }
@@ -1140,28 +1312,23 @@ function drawSec(){
     $('#sInfo').innerHTML=''; return;
   }
   const p=L[i], dl=+S.cfg.dLE||0, dr=+S.cfg.dLD||0, ex=+S.cfg.sexag||1, it=+S.cfg.it||0;
-  const proj=[[-dl,p.pLE],[0,p.g],[dr,p.pLD]];
-  const terr=[[-dl,p.le],[0,p.ex],[dr,p.ld]].filter(q=>q[1]!=null);
+  const geo=p.geo||secGeom(p,S.cfg), terr=geo.terr, xl=geo.xl, xr=geo.xr;
+  const pAt=x=>p.g-it/100*Math.abs(x);
+  const proj=[[xl,pAt(xl)],[0,p.g],[xr,pAt(xr)]];
   const zs=proj.map(q=>q[1]).concat(terr.map(q=>q[1]));
   let z0=Math.min(...zs), z1=Math.max(...zs);
   if(z1-z0<0.2){const m=(z0+z1)/2;z0=m-0.1;z1=m+0.1}
-  const span=dl+dr, W0=Math.max(span,1), PL=22, PR=22, PT=58, PB=62;
+  const tx0=Math.min(xl,terr.length?terr[0][0]:xl), tx1=Math.max(xr,terr.length?terr[terr.length-1][0]:xr);
+  const span=xr-xl, W0=Math.max(tx1-tx0,1), PL=22, PR=22, PT=58, PB=62;
   const aw=SW-PL-PR, ah=SH-PT-PB, sx=Math.min(aw/W0,ah/((z1-z0)*ex)), sz=sx*ex;
-  const ox=PL+(aw-W0*sx)/2+dl*sx, zc=(z0+z1)/2, yc=PT+ah/2;
+  const ox=PL+(aw-W0*sx)/2-tx0*sx, zc=(z0+z1)/2, yc=PT+ah/2;
   const X=x=>ox+x*sx, Y=z=>yc-(z-zc)*sz;
-  const tAt=x=>{
-    for(let k=0;k<terr.length-1;k++){
-      const a=terr[k], b=terr[k+1];
-      if(x>=a[0]-1e-9&&x<=b[0]+1e-9) return a[1]+(b[1]-a[1])*(x-a[0])/(b[0]-a[0]);
-    }
-    return null;
-  };
-  const pAt=x=>x<0?p.g+(p.g-p.pLE)*x/(dl||1):p.g-(p.g-p.pLD)*x/(dr||1);
+  const tAt=x=>terrAtSec(terr,x);
 
   // preenchimento de corte/aterro
-  const N=80;
+  const N=100;
   for(let k=0;k<N&&span>0;k++){
-    const xa=-dl+span*k/N, xb=-dl+span*(k+1)/N, ta=tAt(xa), tb=tAt(xb);
+    const xa=xl+span*k/N, xb=xl+span*(k+1)/N, ta=tAt(xa), tb=tAt(xb);
     if(ta==null||tb==null) continue;
     const pa=pAt(xa), pb=pAt(xb);
     c.fillStyle=(pa-ta)+(pb-tb)>0?'rgba(0,71,214,.28)':'rgba(196,0,0,.28)';
@@ -1177,7 +1344,15 @@ function drawSec(){
   // projeto
   c.strokeStyle=COL.gr; c.lineWidth=4; c.beginPath();
   proj.forEach((q,k)=>k?c.lineTo(X(q[0]),Y(q[1])):c.moveTo(X(q[0]),Y(q[1]))); c.stroke();
-  proj.forEach(q=>{ c.fillStyle=COL.gr; c.fillRect(X(q[0])-5,Y(q[1])-5,10,10); });
+  [-dl,0,dr].forEach(x=>{ c.fillStyle=COL.gr; c.fillRect(X(x)-5,Y(pAt(x))-5,10,10); });
+  // offsets: losango no terreno e traço no pavimento
+  if(S.cfg.useOff) [[-(+S.cfg.oLE||0),p.ole],[+S.cfg.oLD||0,p.old]].forEach(([x,zt])=>{
+    if(zt==null) return;
+    const px=X(x), py=Y(zt);
+    c.beginPath(); c.moveTo(px,py-7); c.lineTo(px+7,py); c.lineTo(px,py+7); c.lineTo(px-7,py); c.closePath();
+    c.fillStyle='#fff'; c.fill(); c.lineWidth=2.5; c.strokeStyle='#7a4a00'; c.stroke();
+    c.strokeStyle='#777'; c.lineWidth=1; c.setLineDash([3,3]); c.beginPath(); c.moveTo(px,py); c.lineTo(px,Y(pAt(x))); c.stroke(); c.setLineDash([]);
+  });
   // inclinações
   if(dl>0) sText('◄ '+fmt(it,2)+'%',X(-dl/2),Y(pAt(-dl/2))-16,'#7a0050');
   if(dr>0) sText(fmt(it,2)+'% ►',X(dr/2),Y(pAt(dr/2))-16,'#7a0050');
@@ -1195,14 +1370,17 @@ function drawSec(){
   sText('V '+fmt(ex,0)+'x',SW-6,16,'#333','right','12px system-ui,sans-serif');
 
   const f3=v=>v==null?'—':fmt(v,3);
+  const lin=[['LE',p.le,p.pLE,p.dLE],['Eixo',p.ex,p.g,p.dEX],['LD',p.ld,p.pLD,p.dLD]];
+  if(S.cfg.useOff){ lin.unshift(['Off LE',p.ole,p.pOLE,p.dOLE]); lin.push(['Off LD',p.old,p.pOLD,p.dOLD]); }
   $('#sInfo').innerHTML='<table><tr><th></th><th>Terreno</th><th>Projeto</th><th>C/A</th></tr>'+
-    [['LE',p.le,p.pLE,p.dLE],['Eixo',p.ex,p.g,p.dEX],['LD',p.ld,p.pLD,p.dLD]].map(([n,t,z,d])=>'<tr><td>'+n+'</td><td>'+f3(t)+'</td><td>'+f3(z)+'</td>'+caTd(d)+'</tr>').join('')+'</table>';
+    lin.map(([n,t,z,d])=>'<tr><td>'+n+'</td><td>'+f3(t)+'</td><td>'+f3(z)+'</td>'+caTd(d)+'</tr>').join('')+
+    '<tr><td>Área</td><td colspan="3"><span class="C">corte '+fmt(p.cut,2)+' m²</span> · <span class="A">aterro '+fmt(p.fill,2)+' m²</span></td></tr></table>';
 }
 
 /* ---------- arquivos ---------- */
 $('#bCsv').onclick=()=>{
   R=calcState(S);
-  download(new Blob([buildCSV(R.rows)],{type:'text/csv;charset=utf-8'}),'greide_'+stamp()+'.csv');
+  download(new Blob([buildCSV(R.rows,!!S.cfg.useOff)],{type:'text/csv;charset=utf-8'}),'greide_'+stamp()+'.csv');
 };
 $('#bPng').onclick=()=>{
   const go=()=>{
