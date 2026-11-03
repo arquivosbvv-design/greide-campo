@@ -169,7 +169,7 @@ dialog h2{margin:0 0 8px;font-size:19px}
   </div>
   <div class="row"><button id="bImp">Importar arquivo da coletora (TXT/CSV)</button></div>
   <input type="file" id="fImp" accept=".txt,.csv,.tsv,text/plain,text/csv" hidden>
-  <p class="hint">Formatos aceitos: <b>Estaca;LE;Eixo;LD</b> (ou Estaca;LE;LD, ou com offsets Estaca;OffLE;LE;Eixo;LD;OffLD), separador ; , ou tab — ou <b>PNEZD</b> com a descrição D = E12_LE, E12_LD, E12_EX, E12_OLE, E12_OLD.</p>
+  <p class="hint">Formatos aceitos: <b>Estaca;LE;Eixo;LD</b> (ou Estaca;LE;LD, ou com offsets Estaca;OffLE;LE;Eixo;LD;OffLD), separador ; , ou tab — ou <b>PNEZD</b> (ou PENZD) com a descrição D = E12_LE, E12_LD, E12_EX… ou só LE, LD, EX — aí o app junta os pontos em seções pela posição e você diz a estaca da primeira.</p>
 </section>
 
 <section id="p-perfil" hidden>
@@ -649,15 +649,17 @@ function buildPNEZD(rows,cfg,n0){
       if(r[k]==null||(!off&&(k==='ole'||k==='old'))) return;
       const p=r.xy&&r.xy[k];
       if(!p){sem++;return}
-      L.push([n++,p[0].toFixed(3),p[1].toFixed(3),r[zk[k]].toFixed(3),'E'+r.est.replace(',','.')+'_'+tag[k]+'_'+sfx].join(','));
+      const ne=cfg.ne==='EN'?[p[1],p[0]]:p;
+      L.push([n++,ne[0].toFixed(3),ne[1].toFixed(3),r[zk[k]].toFixed(3),'E'+r.est.replace(',','.')+'_'+tag[k]+'_'+sfx].join(','));
     });
   });
   return {txt:L.join('\r\n')+(L.length?'\r\n':''),n:L.length,sem};
 }
 function parseImport(text,interval){
-  const out=[], bad=[], warn=[], byKey=new Map();
+  const out=[], bad=[], warn=[], byKey=new Map(), loose=[], cs=[];
   let nA=0, nB=0;
   const reB=/^E?\s*(-?\d+(?:\s*\+\s*\d+(?:[.,]\d+)?)?)\s*[_\-\s]?\s*(OLE|OLD|LE|LD|EX|EIXO|CL)$/i;
+  const reS=/^(OLE|OLD|LE|LD|EX|EIXO|CL)$/i;
   const KB={OLE:'ole',OLD:'old',LE:'le',LD:'ld'};
   text.split(/\r\n|\n|\r/).forEach((ln,idx)=>{
     const t=ln.trim(), n=idx+1;
@@ -667,8 +669,13 @@ function parseImport(text,interval){
     const descB=f.length>=5?f.slice(4).join(' ').trim():'';
     if(f.length>=5&&!(f.length===6&&!reB.test(descB))){
       const desc=descB, m=desc.match(reB), z=parseNum(f[3]);
-      if(!m){bad.push({n,t,why:'descrição sem estaca/lado (ex.: E12_LE)'});return}
       if(z==null){bad.push({n,t,why:'cota Z inválida'});return}
+      if(!m){
+        // só o lado (LE/LD/EX): a estaca sai da posição do ponto (ver sectionize)
+        const ms=desc.match(reS), c1=parseNum(f[1]), c2=parseNum(f[2]);
+        if(ms&&c1!=null&&c2!=null){ loose.push({line:n,pid:f[0],c1,c2,z,k:KB[ms[1].toUpperCase()]||'ex'}); cs.push([c1,c2]); return; }
+        bad.push({n,t,why:'descrição sem lado (LE, LD, EX) ou coordenada inválida'});return
+      }
       const est=m[1].replace(/\s/g,''), x=parseEst(est,interval);
       if(x==null){bad.push({n,t,why:'estaca inválida'});return}
       const side=m[2].toUpperCase(), k=KB[side]||'ex';
@@ -679,7 +686,7 @@ function parseImport(text,interval){
       row[k]=z; nB++;
       // N e E do ponto (para a planta e para devolver cotas de projeto à coletora)
       const pn=parseNum(f[1]), pe=parseNum(f[2]);
-      if(pn!=null&&pe!=null){ row.xy=row.xy||{}; row.xy[k]=[pn,pe]; row.pid=row.pid||{}; row.pid[k]=f[0]; }
+      if(pn!=null&&pe!=null){ row.xy=row.xy||{}; row.xy[k]=[pn,pe]; row.pid=row.pid||{}; row.pid[k]=f[0]; cs.push([pn,pe]); }
       return;
     }
     if(f.length===3||f.length===4||f.length===6){
@@ -697,8 +704,67 @@ function parseImport(text,interval){
     }
     bad.push({n,t,why:'formato não reconhecido'});
   });
+  // ordem das coordenadas: em UTM no Brasil o N tem 7 dígitos e o E 6, então E,N quando a 2ª coluna é sempre a maior
+  const en=cs.length>0&&cs.every(([a,b])=>Math.abs(a)<1e6&&Math.abs(b)>=1e6);
+  if(en){
+    out.forEach(r=>{ if(r.xy) Object.keys(r.xy).forEach(k=>{ const p=r.xy[k]; r.xy[k]=[p[1],p[0]]; }); });
+  }
+  loose.forEach(p=>{ p.n=en?p.c2:p.c1; p.e=en?p.c1:p.c2; });
   out.forEach(r=>{ if(r.ole===undefined) r.ole=null; if(r.old===undefined) r.old=null; if(!r.xy){r.xy=null;r.pid=null} });
-  return {rows:out,bad,warn,fmt:nA&&nB?'misto':nA?'Estaca;LE;Eixo;LD':nB?'PNEZD':''};
+  if(loose.length&&nB) warn.push(loose.length+' ponto(s) sem estaca na descrição foram ignorados (o resto do arquivo tem estaca)');
+  return {rows:out,bad,warn,loose:nB?[]:loose,ne:en?'EN':'NE',
+    fmt:nA&&nB?'misto':nA?'Estaca;LE;Eixo;LD':nB?'PNEZD':loose.length?'PNEZD sem estaca':''};
+}
+// pontos sem estaca: junta em seções (pontos a menos de meio intervalo um do outro), ordena as seções ao longo
+// da estrada a partir da ponta onde está o 1º ponto do arquivo e conta os passos (um buraco de 40 m = 2 estacas)
+function sectionize(P,interval){
+  const iv=+interval||20, thr=Math.max(4,0.5*iv), warn=[];
+  const par=P.map((_,i)=>i), fnd=i=>par[i]===i?i:(par[i]=fnd(par[i]));
+  const cell=new Map(), key=(a,b)=>a+','+b, gc=p=>[Math.floor(p.n/thr),Math.floor(p.e/thr)];
+  P.forEach((p,i)=>{ const k=key(...gc(p)); if(!cell.has(k)) cell.set(k,[]); cell.get(k).push(i); });
+  P.forEach((p,i)=>{ const [a,b]=gc(p);
+    for(let da=-1;da<=1;da++) for(let db=-1;db<=1;db++) (cell.get(key(a+da,b+db))||[]).forEach(j=>{
+      if(j>i&&Math.hypot(P[j].n-p.n,P[j].e-p.e)<=thr) par[fnd(j)]=fnd(i); }); });
+  const G=new Map();
+  P.forEach((p,i)=>{ const r=fnd(i); if(!G.has(r)) G.set(r,[]); G.get(r).push(p); });
+  const C=[...G.values()].map(g=>{
+    const by={};
+    g.forEach(p=>(by[p.k]=by[p.k]||[]).push(p));
+    // dois pontos do mesmo lado e nenhum eixo: o mais perto do outro lado vira eixo (descrição trocada no campo)
+    ['le','ld'].forEach(s=>{
+      const o=s==='le'?'ld':'le';
+      if(by[s]&&by[s].length===2&&!by.ex&&by[o]){
+        const q=by[o][0], d=p=>Math.hypot(p.n-q.n,p.e-q.e);
+        by[s].sort((a,b)=>d(b)-d(a)); by.ex=[by[s].pop()];
+        warn.push('Ponto '+by.ex[0].pid+' veio como '+s.toUpperCase()+', mas está entre o '+s.toUpperCase()+' e o '+o.toUpperCase()+' da seção: usado como eixo');
+      }
+    });
+    const s={z:{},xy:{},pid:{}};
+    Object.keys(by).forEach(k=>{
+      const L=by[k];
+      if(L.length>1) warn.push('Pontos '+L.map(p=>p.pid).join(', ')+' caíram na mesma seção como '+k.toUpperCase()+': usado o último');
+      const p=L[L.length-1]; s.z[k]=p.z; s.xy[k]=[p.n,p.e]; s.pid[k]=p.pid;
+    });
+    const X=s.xy;
+    s.c=X.ex?X.ex:X.le&&X.ld?[(X.le[0]+X.ld[0])/2,(X.le[1]+X.ld[1])/2]:[g.reduce((a,p)=>a+p.n,0)/g.length,g.reduce((a,p)=>a+p.e,0)/g.length];
+    s.minLine=Math.min(...g.map(p=>p.line));
+    return s;
+  });
+  if(C.length<2) return {secs:C.map(s=>Object.assign(s,{step:0})),warn};
+  const d=(a,b)=>Math.hypot(a.c[0]-b.c[0],a.c[1]-b.c[1]);
+  // uma ponta: a seção mais longe de uma qualquer; daí vizinho mais próximo
+  let a=C.reduce((m,s)=>d(s,C[0])>d(m,C[0])?s:m,C[0]);
+  const left=new Set(C), ord=[a]; left.delete(a);
+  while(left.size){ let b=null, bd=Infinity; left.forEach(s=>{ const q=d(s,a); if(q<bd){bd=q;b=s} }); ord.push(b); left.delete(b); a=b; }
+  // começa pela ponta que tem o primeiro ponto do arquivo
+  const f0=Math.min(...C.map(s=>s.minLine)), ia=ord.findIndex(s=>s.minLine===f0);
+  if(ia>ord.length/2) ord.reverse();
+  let st=0;
+  ord.forEach((s,k)=>{
+    if(k){ const q=d(s,ord[k-1]); st+=Math.max(1,Math.round(q/iv)); if(q>3*iv) warn.push('Salto de '+q.toFixed(0)+' m entre seções: confira se falta seção ou se a ordem saiu errada ali'); }
+    s.step=st;
+  });
+  return {secs:ord,warn};
 }
 // eixo LandXML (Civil 3D e outros): planta amostrada a cada ~2 m, curvas circulares (PC/PT/raio/sentido) e,
 // se houver, a superelevação do projeto. Coordenadas em "N E"; estacas em metros, como a distância do app.
@@ -776,7 +842,7 @@ const fmtIn=v=>v==null?'':String(+v.toFixed(4)).replace('.',',');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 function defState(){
-  return {cfg:{start:'0',interval:20,dir:1,incEixo:false,exag:10,tol:0.10,Ldef:40,dLE:3.5,dLD:3.5,it:2,sexag:5,fator:1,useOff:false,oLE:4.5,oLD:4.5,esp:0,gref:'topo',saida:'datum',curvas:[],eixo:null},
+  return {cfg:{start:'0',interval:20,dir:1,incEixo:false,exag:10,tol:0.10,Ldef:40,dLE:3.5,dLD:3.5,it:2,sexag:5,fator:1,useOff:false,oLE:4.5,oLD:4.5,esp:0,gref:'topo',saida:'datum',curvas:[],eixo:null,ne:'NE'},
     rows:[0,0,0,0,0].map(()=>newRow()),mode:'livre',free:{},pivs:[]};
 }
 function normState(o){
@@ -794,6 +860,7 @@ function normState(o){
   if(!['topo','datum'].includes(s.cfg.gref)) s.cfg.gref=d.cfg.gref;
   if(!['topo','datum'].includes(s.cfg.saida)) s.cfg.saida=d.cfg.saida;
   if(!(+s.cfg.esp>=0)) s.cfg.esp=0;
+  if(s.cfg.ne!=='EN') s.cfg.ne='NE';
   s.cfg.curvas=Array.isArray(s.cfg.curvas)?s.cfg.curvas.filter(c=>c&&typeof c==='object').map(normCurva):[];
   const E=s.cfg.eixo;
   s.cfg.eixo=E&&Array.isArray(E.pts)&&E.pts.length>1&&E.pts.every(p=>Array.isArray(p)&&p.length===3&&p.every(isFinite))?{nome:String(E.nome||'Eixo'),pts:E.pts}:null;
@@ -1035,10 +1102,39 @@ $('#fImp').onchange=e=>{
   rd.onerror=()=>toast('Não foi possível ler o arquivo');
   rd.readAsText(f);
 };
+let impLoose=null;
 function openImport(text){
-  const res=parseImport(text,S.cfg.interval); impPending=res;
-  const f3=v=>v==null?'—':fmt(v,3);
-  let h='<p><b>'+res.rows.length+'</b> estaca(s) reconhecida(s)'+(res.fmt?' — formato '+esc(res.fmt):'')+'.</p>';
+  const res=parseImport(text,S.cfg.interval); impPending=res; impLoose=null;
+  if(res.loose.length&&!res.rows.length){
+    const sz=sectionize(res.loose,S.cfg.interval);
+    impLoose={secs:sz.secs,warn:sz.warn,start:S.cfg.start,dir:S.cfg.dir,rev:false};
+  }
+  renderImp();
+  $('#dlgImp').showModal();
+}
+// seções sem estaca → linhas: estaca da 1ª seção + passos × intervalo, no sentido escolhido
+function looseRows(){
+  const L=impLoose, iv=S.cfg.interval, x0=parseEst(L.start,iv);
+  if(x0==null) return [];
+  const mx=L.secs.length?L.secs[L.secs.length-1].step:0, ord=L.rev?L.secs.slice().reverse():L.secs;
+  const g=(o,k)=>o[k]==null?null:o[k];
+  return ord.map(s=>({x:x0+L.dir*iv*(L.rev?mx-s.step:s.step),le:g(s.z,'le'),ex:g(s.z,'ex'),ld:g(s.z,'ld'),ole:g(s.z,'ole'),old:g(s.z,'old'),xy:s.xy,pid:s.pid}));
+}
+function renderImp(){
+  const res=impPending, f3=v=>v==null?'—':fmt(v,3);
+  let h='';
+  if(impLoose){
+    const L=impLoose;
+    res.rows=looseRows();
+    const ord=L.rev?L.secs.slice().reverse():L.secs, p0=ord.length?ord[0].pid:{};
+    h+='<p><b>'+res.loose.length+'</b> pontos sem estaca na descrição, agrupados em <b>'+L.secs.length+'</b> seções pela posição.</p>'+
+      '<div class="row"><label>Estaca da 1ª seção<input id="ilStart" autocomplete="off" value="'+esc(L.start)+'"></label></div>'+
+      '<div class="row"><div class="seg"><button data-il="1"'+(L.dir===1?' class="on"':'')+'>Progressivo</button><button data-il="-1"'+(L.dir===-1?' class="on"':'')+'>Regressivo</button></div></div>'+
+      '<p class="hint">1ª seção = pontos '+esc(Object.values(p0).join(', '))+(L.rev?' (a outra ponta)':' (a ponta do início do arquivo)')+'.</p>'+
+      '<div class="row"><button id="ilRev">Começar pela outra ponta</button></div>';
+    if(res.rows.length) h+='<p>Estacas <b>'+fe(res.rows[0].x)+'</b> a <b>'+fe(res.rows[res.rows.length-1].x)+'</b>. Confira com o campo.</p>';
+    else h+='<p class="C">Estaca da 1ª seção inválida.</p>';
+  } else h+='<p><b>'+res.rows.length+'</b> estaca(s) reconhecida(s)'+(res.fmt?' — formato '+esc(res.fmt):'')+'.</p>';
   if(res.rows.length){
     h+='<div class="imp-ok"><table><tr><th>Estaca</th><th>LE</th><th>Eixo</th><th>LD</th></tr>'+
       res.rows.map(r=>'<tr><td>'+fe(r.x)+'</td><td>'+f3(r.le)+'</td><td>'+f3(r.ex)+'</td><td>'+f3(r.ld)+'</td></tr>').join('')+'</table></div>';
@@ -1047,11 +1143,20 @@ function openImport(text){
     h+='<p class="C">'+res.bad.length+' linha(s) NÃO reconhecida(s) — não serão importadas:</p><div class="imp-bad">'+
       res.bad.map(b=>'Linha '+b.n+' ('+esc(b.why)+'): '+esc(b.t)).join('\n')+'</div>';
   } else h+='<p>Todas as linhas com conteúdo foram reconhecidas.</p>';
-  if(res.warn.length) h+='<p><b>Avisos:</b></p><div class="imp-bad">'+res.warn.map(esc).join('\n')+'</div>';
+  const ws=res.warn.concat(impLoose?impLoose.warn:[]);
+  if(ws.length) h+='<p><b>Avisos:</b></p><div class="imp-bad">'+ws.map(esc).join('\n')+'</div>';
   $('#impBody').innerHTML=h;
   $('#impOk').disabled=!res.rows.length;
-  $('#dlgImp').showModal();
 }
+$('#impBody').addEventListener('click',e=>{
+  if(!impLoose) return;
+  const b=e.target.closest('button'); if(!b) return;
+  if(b.id==='ilRev') impLoose.rev=!impLoose.rev;
+  else if(b.dataset.il) impLoose.dir=+b.dataset.il;
+  else return;
+  renderImp();
+});
+$('#impBody').addEventListener('change',e=>{ if(impLoose&&e.target.id==='ilStart'){ impLoose.start=e.target.value.trim(); renderImp(); } });
 $('#impNo').onclick=()=>$('#dlgImp').close();
 $('#impOk').onclick=()=>{
   if(!impPending||!impPending.rows.length) return;
@@ -1059,6 +1164,8 @@ $('#impOk').onclick=()=>{
   S.rows=impPending.rows.map(r=>Object.assign(newRow(fe(r.x)),{le:r.le,ex:r.ex,ld:r.ld,ole:r.ole,old:r.old,xy:r.xy||null,pid:r.pid||null}));
   if(impPending.rows.some(r=>r.ole!=null||r.old!=null)&&!S.cfg.useOff){ S.cfg.useOff=true; syncCfgUI(); toast('Offsets ativados — confira as distâncias na aba Dados'); }
   S.free={}; S.pivs=[]; sel=-1;
+  if(impPending.rows.some(r=>r.xy)) S.cfg.ne=impPending.ne;
+  if(impLoose){ S.cfg.start=impLoose.start; S.cfg.dir=impLoose.dir; syncCfgUI(); }
   $('#dlgImp').close(); view.fit=true; pview.fit=true;
   renderGrid(); refresh(); save();
   toast(S.rows.length+' estacas importadas');
