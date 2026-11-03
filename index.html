@@ -81,6 +81,18 @@ dialog h2{margin:0 0 8px;font-size:19px}
 .imp-ok table{width:100%;font-size:14px}
 .imp-ok td,.imp-ok th{padding:4px 6px;border-bottom:1px solid #ddd;text-align:right}
 .imp-ok td:first-child,.imp-ok th:first-child{text-align:left}
+#pvwrap{border:2px solid #000;border-radius:6px;overflow:hidden}
+#pv{display:block;width:100%;height:46vh;min-height:250px;max-height:520px;touch-action:none;background:#fff}
+.curva{border:2px solid #bbb;border-radius:8px;padding:4px 10px;margin:0 0 10px}
+.curva.on{border-color:var(--gr);box-shadow:0 0 0 2px var(--gr) inset}
+.curva h3{margin:6px 0;font-size:17px}
+.curva table{width:100%;font-size:14px;margin:6px 0;border:1px solid #999}
+.curva th,.curva td{padding:4px 6px;border-bottom:1px solid #ddd;text-align:right;font-variant-numeric:tabular-nums}
+.curva th{background:#e8eefb}
+.curva td:first-child,.curva th:first-child,.curva td:nth-child(2),.curva th:nth-child(2){text-align:left}
+.curva tr.k td{color:#7a0050}
+.warn{color:var(--corte);font-weight:700}
+.tabs button{padding:0 2px}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#000;color:#fff;padding:10px 16px;border-radius:8px;z-index:99;font-size:15px;max-width:90vw;text-align:center}
 </style>
 </head>
@@ -95,6 +107,7 @@ dialog h2{margin:0 0 8px;font-size:19px}
     <button data-tab="dados">Dados</button>
     <button data-tab="perfil">Perfil</button>
     <button data-tab="sec">Seções</button>
+    <button data-tab="planta">Planta</button>
     <button data-tab="arq">Arquivo</button>
   </nav>
 </div>
@@ -127,6 +140,17 @@ dialog h2{margin:0 0 8px;font-size:19px}
       <label>Offset LD (m do eixo)<input id="cOld" inputmode="decimal" autocomplete="off"></label>
     </div>
     <p class="hint" id="offHint">Offset dentro da pista só melhora o terreno; fora da pista, o pavimento é prolongado com o mesmo caimento até ele.</p>
+  </details>
+  <details open>
+    <summary>Pavimento</summary>
+    <div class="row">
+      <label>Espessura do pavimento (cm)<input id="cEsp" inputmode="decimal" autocomplete="off" placeholder="0 = sem pavimento"></label>
+    </div>
+    <div id="pavRow">
+      <div class="row"><label>O greide desenhado é o<div class="seg"><button id="cGrT">Topo</button><button id="cGrD">Datum</button></div></label></div>
+      <div class="row"><label>Cotas de projeto, C/A e volumes no<div class="seg"><button id="cSaT">Topo</button><button id="cSaD">Datum</button></div></label></div>
+    </div>
+    <p class="hint" id="pavHint">Datum = topo − espessura, com a mesma inclinação. No datum, corte/aterro e volumes são de terraplenagem. Trocar o greide entre topo e datum mantém o projeto no lugar (as cotas dos PIVs mudam pela espessura).</p>
   </details>
 
   <div class="gridwrap">
@@ -191,6 +215,30 @@ dialog h2{margin:0 0 8px;font-size:19px}
   <p class="hint">Arraste para o lado no desenho para trocar de estaca. Azul = aterro, vermelho = corte.</p>
 </section>
 
+<section id="p-planta" hidden>
+  <div id="pvwrap"><canvas id="pv"></canvas></div>
+  <p class="hint" id="plHint"></p>
+  <div class="row secnav">
+    <button id="plPrev" aria-label="Estaca anterior">◀</button>
+    <select id="plSel" aria-label="Estaca"></select>
+    <button id="plNext" aria-label="Próxima estaca">▶</button>
+  </div>
+  <div class="row">
+    <button id="bPC">PC nesta estaca</button>
+    <button id="bPT">PT nesta estaca</button>
+  </div>
+  <div class="row">
+    <button id="bXml">Importar eixo LandXML</button>
+    <button id="bXmlDel" class="danger">Tirar eixo XML</button>
+  </div>
+  <input type="file" id="fXml" accept=".xml,text/xml,application/xml" hidden>
+  <p class="hint" id="xmlInfo"></p>
+  <h2>Curvas com superelevação</h2>
+  <p class="hint">Giro em torno do eixo, saindo do abaulamento normal (a inclinação transversal da aba Dados). O lado externo sobe até <b>e</b>; o interno fica no abaulamento até o externo chegar nele e depois acompanha até −e. Valores de <b>e</b> e da transição vêm do projeto geométrico.</p>
+  <div id="curvas"></div>
+  <div class="row"><button id="bCurva">+ Curva</button></div>
+</section>
+
 <section id="p-arq" hidden>
   <h2>Exportar</h2>
   <div class="row">
@@ -198,6 +246,8 @@ dialog h2{margin:0 0 8px;font-size:19px}
     <button id="bPng">Perfil PNG</button>
     <button id="bJson">Projeto JSON</button>
   </div>
+  <div class="row"><button id="bPnezd">Pontos de projeto para a coletora (PNEZD)</button></div>
+  <p class="hint">Um ponto de projeto em cada ponto medido (mesmo N/E), com a cota da superfície escolhida em Pavimento (topo/datum). Só para pontos importados de PNEZD.</p>
   <h2>Abrir</h2>
   <div class="row"><button id="bOpen">Abrir projeto JSON</button></div>
   <input type="file" id="fJson" accept=".json,application/json" hidden>
@@ -282,14 +332,93 @@ function computeDists(rows,cfg){
   });
 }
 // greide do eixo inicial: a média dos pontos de projeto (bordos = eixo − i·d) fica igual à média do terreno
-function mediaOf(r,cfg){
-  const it=(+cfg.it||0)/100, v=[], off=[];
-  if(r.le!=null){v.push(r.le);off.push(it*(+cfg.dLE||0))}
-  if(r.ld!=null){v.push(r.ld);off.push(it*(+cfg.dLD||0))}
+function mediaOf(r,cfg,sl){
+  const v=[], off=[];
+  if(r.le!=null){v.push(r.le);off.push(sl.l*(+cfg.dLE||0))}
+  if(r.ld!=null){v.push(r.ld);off.push(sl.r*(+cfg.dLD||0))}
   if(r.ex!=null&&(cfg.incEixo||!v.length)){v.push(r.ex);off.push(0)}
   if(!v.length) return null;
   const sum=a=>a.reduce((x,y)=>x+y,0);
   return (sum(v)+sum(off))/v.length;
+}
+// pavimento: espessura (m) e diferença entre a superfície de cálculo (topo ou datum) e o greide desenhado
+function pavEsp(cfg){ const e=(+cfg.esp||0)/100; return e>0?e:0; }
+function pavShift(cfg){
+  const e=pavEsp(cfg);
+  if(!e||cfg.gref===cfg.saida) return 0;
+  return cfg.gref==='topo'?-e:e;
+}
+// superelevação (giro em torno do eixo). Curva: pc, pt (m), ext = lado externo ('LE'/'LD'), e (%), le = comprimento
+// em que o lado externo vai de 0 a e (m), f = fração de le antes do PC. O giro do abaulamento (−a → 0) usa a mesma
+// taxa, então começa a·le/e antes. s = inclinação do lado externo (+ sobe para fora); o interno cai max(a, s).
+function curveKeys(c,a){
+  const e=(+c.e||0)/100, le=+c.le||0, f=Math.min(1,Math.max(0,c.f==null?0.5:+c.f));
+  if(!(e>0&&le>0)||c.pc==null||c.pt==null||!(c.pt>c.pc)||(c.ext!=='LE'&&c.ext!=='LD')) return null;
+  const xs=c.pc-f*le, xf=c.pt+f*le, lt=a*le/e;
+  return {e,le,f,a,xs,xf,x0:xs-lt,x1:xs+le,x2:xf-le,x3:xf+lt,ext:c.ext};
+}
+function slopesAt(x,cfg){
+  const a=(+cfg.it||0)/100, out={l:a,r:a};
+  if(x==null||!Array.isArray(cfg.curvas)) return out;
+  for(const c of cfg.curvas){
+    const k=curveKeys(c,a);
+    if(!k||x<=k.x0||x>=k.x3) continue;
+    const cl=v=>Math.min(k.e,Math.max(-a,v));
+    const s=Math.min(cl((x-k.xs)*k.e/k.le),cl((k.xf-x)*k.e/k.le));
+    const dExt=-s, dInt=Math.max(a,s);
+    return k.ext==='LE'?{l:dExt,r:dInt}:{l:dInt,r:dExt};
+  }
+  return out;
+}
+// queda do lado (fração) para x no lado esquerdo (x<0) ou direito
+const sideDrop=(sl,x)=>x<0?sl.l:sl.r;
+// pontos notáveis do giro de uma curva (para a tabela de conferência)
+function curveMarks(c,a){
+  const k=curveKeys(c,a);
+  if(!k) return [];
+  const m=[[k.x0,'início do giro'],[k.xs,'externo 0%'],[c.pc,'PC'],[k.x1,'e total'],[k.x2,'fim do e total'],[c.pt,'PT'],[k.xf,'externo 0%'],[k.x3,'fim do giro']];
+  return m.sort((p,q)=>p[0]-q[0]);
+}
+// sobreposição de giros entre curvas vizinhas
+function curveWarnings(cfg){
+  const a=(+cfg.it||0)/100, ks=(cfg.curvas||[]).map((c,i)=>({i,k:curveKeys(c,a)})).filter(o=>o.k).sort((p,q)=>p.k.x0-q.k.x0), w=[];
+  for(let j=1;j<ks.length;j++) if(ks[j].k.x0<ks[j-1].k.x3) w.push('Curvas '+(ks[j-1].i+1)+' e '+(ks[j].i+1)+': os giros se sobrepõem — vale a curva '+(ks[j-1].i+1)+' no trecho comum.');
+  return w;
+}
+// planta: posição do eixo em cada estaca (ponto do eixo ou meio dos bordos), em ordem de estaca
+function axisPts(rows){
+  return rows.filter(r=>r.x!=null&&r.xy).map(r=>{
+    const q=r.xy; let p=q.ex;
+    if(!p&&q.le&&q.ld) p=[(q.le[0]+q.ld[0])/2,(q.le[1]+q.ld[1])/2];
+    return p?{x:r.x,n:p[0],e:p[1],r}:null;
+  }).filter(Boolean).sort((a,b)=>a.x-b.x);
+}
+function axisAt(ax,x){
+  if(ax.length<2||x<ax[0].x-0.01||x>ax[ax.length-1].x+0.01) return null;
+  let i=0; while(i<ax.length-2&&x>ax[i+1].x) i++;
+  const a=ax[i], b=ax[i+1], t=(x-a.x)/((b.x-a.x)||1e-9);
+  return [a.n+(b.n-a.n)*t,a.e+(b.e-a.e)*t];
+}
+// curva pela planta: deflexão entre a tangente antes do PC e a depois do PT (azimute crescente = curva à direita),
+// raio ≈ desenvolvimento / deflexão, e qual campo (LE/LD) está do lado de fora
+function curveFromPlan(rows,pc,pt){
+  const ax=axisPts(rows);
+  const bf=ax.filter(p=>p.x<=pc+1e-6), af=ax.filter(p=>p.x>=pt-1e-6);
+  if(bf.length<2||af.length<2||!(pt>pc)) return null;
+  const a0=bf[bf.length-2], a1=bf[bf.length-1], b0=af[0], b1=af[1];
+  const h1=Math.atan2(a1.e-a0.e,a1.n-a0.n), h2=Math.atan2(b1.e-b0.e,b1.n-b0.n);
+  let d=h2-h1; while(d>Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI;
+  // LE à esquerda do eixo no sentido crescente? (produto vetorial com E = x, N = y)
+  let vl=0, vr=0;
+  for(let i=0;i<ax.length;i++){
+    const p=ax[i], le=p.r.xy.le, q=ax[Math.min(i+1,ax.length-1)], o=ax[Math.max(i-1,0)];
+    if(!le||q===o) continue;
+    const cr=(q.e-o.e)*(le[0]-p.n)-(q.n-o.n)*(le[1]-p.e);
+    if(cr>0) vl++; else if(cr<0) vr++;
+  }
+  const leLeft=vl>=vr, dir=d>0?'D':'E';
+  return {dir,defl:Math.abs(d)*180/Math.PI,R:Math.abs(d)>1e-6?(pt-pc)/Math.abs(d):null,
+    ext:(dir==='D')===leLeft?'LE':'LD',leLeft,conf:vl+vr>0};
 }
 function evalLinear(pv,x){
   const n=pv.length;
@@ -350,24 +479,31 @@ function greideAt(st,r,ci){
 function calcState(st){
   const c=st.cfg, dists=computeDists(st.rows,c);
   const ci=st.mode==='curva'?curveInfo(st.pivs,c.Ldef):null;
-  const it=(+c.it||0)/100;
-  const off=!!c.useOff;
-  const rows=st.rows.map((r,i)=>({id:r.id,i,x:dists[i],est:dists[i]==null?'?':fmtEst(dists[i],c.interval),le:r.le,ex:r.ex,ld:r.ld,
-    ole:off?r.ole:null,old:off?r.old:null,m:mediaOf(r,c),g:null,pLE:null,pLD:null,pOLE:null,pOLD:null,
-    dLE:null,dEX:null,dLD:null,dOLE:null,dOLD:null,fill:0,cut:0,geo:null}));
+  const off=!!c.useOff, e=pavEsp(c), sh=pavShift(c);
+  // m = greide inicial: o datum fica na média do terreno (não muda ao trocar topo/datum)
+  const rows=st.rows.map((r,i)=>{ const sl=slopesAt(dists[i],c), m=mediaOf(r,c,sl); return {id:r.id,i,x:dists[i],est:dists[i]==null?'?':fmtEst(dists[i],c.interval),le:r.le,ex:r.ex,ld:r.ld,
+    ole:off?r.ole:null,old:off?r.old:null,xy:r.xy||null,pid:r.pid||null,sl,m:m==null?null:m+(c.gref==='topo'?e:0),g:null,gc:null,gT:null,gD:null,pLE:null,pLD:null,pOLE:null,pOLD:null,
+    dLE:null,dEX:null,dLD:null,dOLE:null,dOLD:null,fill:0,cut:0,geo:null}; });
   const df=(g,t)=>(g==null||t==null)?null:g-t;
   rows.forEach(r=>{
     if(r.x==null) return;
     r.g=greideAt(st,r,ci);
     if(r.g==null) return;
-    r.pLE=r.g-it*(+c.dLE||0); r.pLD=r.g-it*(+c.dLD||0);
-    r.dLE=df(r.pLE,r.le); r.dEX=df(r.g,r.ex); r.dLD=df(r.pLD,r.ld);
-    if(off){ r.pOLE=r.g-it*(+c.oLE||0); r.pOLD=r.g-it*(+c.oLD||0); r.dOLE=df(r.pOLE,r.ole); r.dOLD=df(r.pOLD,r.old); }
+    // gc = eixo da superfície de cálculo; gT/gD = eixo do topo e do datum
+    r.gc=r.g+sh; r.gT=r.g+(c.gref==='datum'?e:0); r.gD=r.gT-e;
+    const sl=r.sl;
+    r.pLE=r.gc-sl.l*(+c.dLE||0); r.pLD=r.gc-sl.r*(+c.dLD||0);
+    r.dLE=df(r.pLE,r.le); r.dEX=df(r.gc,r.ex); r.dLD=df(r.pLD,r.ld);
+    if(off){ r.pOLE=r.gc-sl.l*(+c.oLE||0); r.pOLD=r.gc-sl.r*(+c.oLD||0); r.dOLE=df(r.pOLE,r.ole); r.dOLD=df(r.pOLD,r.old); }
     r.geo=secGeom(r,c);
-    const a=secAreas(r.geo,r.g,it); r.fill=a.fill; r.cut=a.cut;
+    const a=secAreas(r.geo,r.gc,sl); r.fill=a.fill; r.cut=a.cut;
   });
   const pts=rows.filter(r=>r.x!=null&&(r.le!=null||r.ex!=null||r.ld!=null||r.ole!=null||r.old!=null)).sort((a,b)=>a.x-b.x);
-  return {rows,pts,ci,vol:volumes(pts.filter(p=>p.g!=null))};
+  const vol=volumes(pts.filter(p=>p.g!=null));
+  // volume do pavimento: espessura × largura da pista × extensão com greide
+  const pg=pts.filter(p=>p.g!=null);
+  vol.pav=e&&pg.length>1?e*((+c.dLE||0)+(+c.dLD||0))*Math.abs(pg[pg.length-1].x-pg[0].x):0;
+  return {rows,pts,ci,vol};
 }
 // pontos de terreno da seção (x = distância ao eixo, negativo à esquerda) e extensão do pavimento
 function secGeom(r,c){
@@ -385,13 +521,13 @@ function terrAtSec(terr,x){
   return null;
 }
 // áreas de aterro e corte (m²) entre pavimento e terreno, só onde os dois existem
-function secAreas(geo,g,it){
+function secAreas(geo,g,sl){
   const z={fill:0,cut:0,w:0};
   if(!geo||g==null||geo.terr.length<2) return z;
   const T=geo.terr, a=Math.max(geo.xl,T[0][0]), b=Math.min(geo.xr,T[T.length-1][0]);
   if(b-a<1e-9) return z;
   const xs=[a,b,0].concat(T.map(q=>q[0])).filter(x=>x>=a-1e-9&&x<=b+1e-9).sort((p,q)=>p-q);
-  const h=x=>g-it*Math.abs(x)-terrAtSec(T,x);
+  const h=x=>g-sideDrop(sl,x)*Math.abs(x)-terrAtSec(T,x);
   for(let k=0;k<xs.length-1;k++){
     const x0=xs[k], x1=xs[k+1], L=x1-x0;
     if(L<1e-9) continue;
@@ -417,13 +553,13 @@ function volumes(pts){
   return v;
 }
 // cota do eixo em que a seção sozinha compensa: corte = fator × aterro
-function balancedG(geo,it,F){
+function balancedG(geo,sl,F){
   if(!geo||geo.terr.length<2) return null;
   const zs=geo.terr.map(q=>q[1]);
   let lo=Math.min(...zs)-50, hi=Math.max(...zs)+50;
-  if(secAreas(geo,lo,it).w<=0) return null;
+  if(secAreas(geo,lo,sl).w<=0) return null;
   for(let n=0;n<60;n++){
-    const m=(lo+hi)/2, a=secAreas(geo,m,it);
+    const m=(lo+hi)/2, a=secAreas(geo,m,sl);
     if(a.cut-F*a.fill>0) lo=m; else hi=m;
   }
   return (lo+hi)/2;
@@ -446,16 +582,16 @@ function solveLin(A,b){
 // mantém as estacas dos PIVs, ajusta as cotas (mínimos quadrados contra a cota de compensação de cada seção)
 // e depois desloca o greide inteiro até corte = fator × aterro no trecho, deixando sobra de corte se não fechar exato
 function optimizeGreide(st){
-  const c=st.cfg, it=(+c.it||0)/100, F=(+c.fator>0)?+c.fator:1;
+  const c=st.cfg, F=(+c.fator>0)?+c.fator:1, sh=pavShift(c);
   const pv=st.pivs, n=pv.length;
   if(n<2) return null;
   const R0=calcState(st), P=R0.pts.filter(p=>p.geo&&p.geo.terr.length>=2);
   const obs=[];
   P.forEach((p,k)=>{
-    const gb=balancedG(p.geo,it,F);
+    const gb=balancedG(p.geo,p.sl,F);
     if(gb==null) return;
     const L=((k>0?p.x-P[k-1].x:0)+(k<P.length-1?P[k+1].x-p.x:0))/2||1;
-    obs.push({x:p.x,gb,w:Math.max(secAreas(p.geo,gb,it).w,0.1)*L});
+    obs.push({x:p.x,gb:gb-sh,w:Math.max(secAreas(p.geo,gb,p.sl).w,0.1)*L});
   });
   if(obs.length<2) return null;
   const mk=zv=>pv.map((p,j)=>({x:p.x,z:zv[j],L:p.L}));
@@ -476,14 +612,47 @@ function optimizeGreide(st){
   const pivs=mk(z);
   return {pivs,vol:calcState(Object.assign({},st,{pivs})).vol,F};
 }
-function buildCSV(rows,off){
-  const f3=v=>v==null?'':fmt(v,3), f2=v=>v==null?'':fmt(v,2);
-  const L=['Estaca;Terreno LE;Terreno Eixo;Terreno LD;Greide eixo;Projeto LE;Projeto LD;LE C/A;Eixo C/A;LD C/A'+
-    (off?';Terreno Off LE;Terreno Off LD;Projeto Off LE;Projeto Off LD;Off LE C/A;Off LD C/A':'')+';Área corte (m²);Área aterro (m²)'];
-  rows.forEach(r=>L.push([r.est,f3(r.le),f3(r.ex),f3(r.ld),f3(r.g),f3(r.pLE),f3(r.pLD),caTxt(r.dLE),caTxt(r.dEX),caTxt(r.dLD)]
+// inclinação de cada lado em % como no croqui: + sobe para fora do eixo, − desce
+const inclTxt=d=>d==null?'':fmt(-d*100,2);
+const inclUI=d=>d==null?'':(-d*100>=0.005?'+':'')+inclTxt(d);
+function buildCSV(rows,cfg){
+  const f3=v=>v==null?'':fmt(v,3), f2=v=>v==null?'':fmt(v,2), off=!!cfg.useOff;
+  const sup=Array.isArray(cfg.curvas)&&cfg.curvas.length>0;
+  const iH=sup?';Incl. LE (%);Incl. LD (%)':'', iV=r=>sup?[inclTxt(r.sl&&r.x!=null?r.sl.l:null),inclTxt(r.sl&&r.x!=null?r.sl.r:null)]:[];
+  if(!pavEsp(cfg)){
+    const L=['Estaca;Terreno LE;Terreno Eixo;Terreno LD;Greide eixo;Projeto LE;Projeto LD;LE C/A;Eixo C/A;LD C/A'+
+      (off?';Terreno Off LE;Terreno Off LD;Projeto Off LE;Projeto Off LD;Off LE C/A;Off LD C/A':'')+';Área corte (m²);Área aterro (m²)'+iH];
+    rows.forEach(r=>L.push([r.est,f3(r.le),f3(r.ex),f3(r.ld),f3(r.g),f3(r.pLE),f3(r.pLD),caTxt(r.dLE),caTxt(r.dEX),caTxt(r.dLD)]
+      .concat(off?[f3(r.ole),f3(r.old),f3(r.pOLE),f3(r.pOLD),caTxt(r.dOLE),caTxt(r.dOLD)]:[])
+      .concat([r.g==null?'':f2(r.cut),r.g==null?'':f2(r.fill)],iV(r)).join(';')));
+    return '﻿'+L.join('\r\n')+'\r\n';
+  }
+  // com pavimento: topo e datum nos bordos e no eixo; C/A e áreas na superfície de cálculo
+  const dl=+cfg.dLE||0, dr=+cfg.dLD||0, s=cfg.saida==='topo'?'topo':'datum';
+  const sb=(g,d,q)=>g==null?null:g-q*d;
+  const L=['Estaca;Terreno LE;Terreno Eixo;Terreno LD;Topo LE;Topo eixo;Topo LD;Datum LE;Datum eixo;Datum LD;LE C/A ('+s+');Eixo C/A ('+s+');LD C/A ('+s+')'+
+    (off?';Terreno Off LE;Terreno Off LD;Projeto Off LE ('+s+');Projeto Off LD ('+s+');Off LE C/A ('+s+');Off LD C/A ('+s+')':'')+
+    ';Área corte (m²);Área aterro (m²);Espessura pavimento (cm)'+iH];
+  rows.forEach(r=>L.push([r.est,f3(r.le),f3(r.ex),f3(r.ld),f3(sb(r.gT,dl,r.sl.l)),f3(r.gT),f3(sb(r.gT,dr,r.sl.r)),f3(sb(r.gD,dl,r.sl.l)),f3(r.gD),f3(sb(r.gD,dr,r.sl.r)),
+    caTxt(r.dLE),caTxt(r.dEX),caTxt(r.dLD)]
     .concat(off?[f3(r.ole),f3(r.old),f3(r.pOLE),f3(r.pOLD),caTxt(r.dOLE),caTxt(r.dOLD)]:[])
-    .concat([r.g==null?'':f2(r.cut),r.g==null?'':f2(r.fill)]).join(';')));
+    .concat([r.g==null?'':f2(r.cut),r.g==null?'':f2(r.fill),fmt(+cfg.esp,1)],iV(r)).join(';')));
   return '﻿'+L.join('\r\n')+'\r\n';
+}
+// pontos de projeto para a coletora (PNEZD), nos mesmos N/E dos pontos medidos, na superfície de cálculo
+function buildPNEZD(rows,cfg,n0){
+  const sfx=pavEsp(cfg)?(cfg.saida==='topo'?'TOPO':'DATUM'):'PROJ', off=!!cfg.useOff, L=[];
+  let n=n0, sem=0;
+  const tag={le:'LE',ex:'EX',ld:'LD',ole:'OLE',old:'OLD'}, zk={le:'pLE',ex:'gc',ld:'pLD',ole:'pOLE',old:'pOLD'};
+  rows.filter(r=>r.x!=null&&r.g!=null).sort((a,b)=>a.x-b.x).forEach(r=>{
+    ['ole','le','ex','ld','old'].forEach(k=>{
+      if(r[k]==null||(!off&&(k==='ole'||k==='old'))) return;
+      const p=r.xy&&r.xy[k];
+      if(!p){sem++;return}
+      L.push([n++,p[0].toFixed(3),p[1].toFixed(3),r[zk[k]].toFixed(3),'E'+r.est.replace(',','.')+'_'+tag[k]+'_'+sfx].join(','));
+    });
+  });
+  return {txt:L.join('\r\n')+(L.length?'\r\n':''),n:L.length,sem};
 }
 function parseImport(text,interval){
   const out=[], bad=[], warn=[], byKey=new Map();
@@ -508,6 +677,9 @@ function parseImport(text,interval){
       if(!row){row={x,le:null,ex:null,ld:null,ole:null,old:null};byKey.set(key,row);out.push(row)}
       if(row[k]!=null) warn.push('Linha '+n+': '+est+' '+side+' repetido — usado o último valor');
       row[k]=z; nB++;
+      // N e E do ponto (para a planta e para devolver cotas de projeto à coletora)
+      const pn=parseNum(f[1]), pe=parseNum(f[2]);
+      if(pn!=null&&pe!=null){ row.xy=row.xy||{}; row.xy[k]=[pn,pe]; row.pid=row.pid||{}; row.pid[k]=f[0]; }
       return;
     }
     if(f.length===3||f.length===4||f.length===6){
@@ -525,21 +697,78 @@ function parseImport(text,interval){
     }
     bad.push({n,t,why:'formato não reconhecido'});
   });
-  out.forEach(r=>{ if(r.ole===undefined) r.ole=null; if(r.old===undefined) r.old=null; });
+  out.forEach(r=>{ if(r.ole===undefined) r.ole=null; if(r.old===undefined) r.old=null; if(!r.xy){r.xy=null;r.pid=null} });
   return {rows:out,bad,warn,fmt:nA&&nB?'misto':nA?'Estaca;LE;Eixo;LD':nB?'PNEZD':''};
+}
+// eixo LandXML (Civil 3D e outros): planta amostrada a cada ~2 m, curvas circulares (PC/PT/raio/sentido) e,
+// se houver, a superelevação do projeto. Coordenadas em "N E"; estacas em metros, como a distância do app.
+function parseLandXML(text){
+  const doc=new DOMParser().parseFromString(text,'application/xml');
+  if(doc.getElementsByTagName('parsererror').length) throw new Error('XML inválido');
+  const kids=(el,n)=>[...el.children].filter(c=>c.localName===n);
+  const all=(el,n)=>[...el.getElementsByTagNameNS('*',n)];
+  const pt=(el,n)=>{ const c=kids(el,n)[0]; if(!c) return null; const v=c.textContent.trim().split(/\s+/).map(Number); return v.length>=2&&isFinite(v[0])&&isFinite(v[1])?[v[0],v[1]]:null; };
+  const num=(el,a)=>{ const v=el.getAttribute(a); return v==null||v===''||!isFinite(v)?null:+v; };
+  const kNum=(el,n)=>{ const c=kids(el,n)[0]; if(!c) return null; const v=c.textContent.trim(); return v===''||!isFinite(v)?null:+v; };
+  return all(doc,'Alignment').map((al,ai)=>{
+    const cg=kids(al,'CoordGeom')[0]; if(!cg) return null;
+    let sta=num(al,'staStart')||0, nEsp=0;
+    const pts=[], curvas=[];
+    const add=(x,p)=>{ if(!pts.length||x-pts[pts.length-1][0]>1e-6) pts.push([x,p[0],p[1]]); };
+    for(const g of [...cg.children]){
+      const s=pt(g,'Start'), e=pt(g,'End'); if(!s||!e) continue;
+      const s0=num(g,'staStart'); if(s0!=null) sta=s0;
+      let L=num(g,'length');
+      if(g.localName==='Curve'){
+        const c=pt(g,'Center'), cw=(g.getAttribute('rot')||'').toLowerCase()==='cw';
+        if(!c) continue;
+        const R=num(g,'radius')||Math.hypot(s[0]-c[0],s[1]-c[1]), th0=Math.atan2(s[0]-c[0],s[1]-c[1]), sg=cw?-1:1;
+        if(!(L>0)){ let d=sg*(Math.atan2(e[0]-c[0],e[1]-c[1])-th0); while(d<=0) d+=2*Math.PI; L=R*d; }
+        const n=Math.max(2,Math.ceil(L/2));
+        for(let k=0;k<=n;k++){ const th=th0+sg*(L/R)*k/n; add(sta+L*k/n,[c[0]+R*Math.sin(th),c[1]+R*Math.cos(th)]); }
+        // curva à direita (horária) → lado externo é o esquerdo
+        curvas.push({pc:sta,pt:sta+L,R,dir:cw?'D':'E',ext:cw?'LE':'LD'});
+      } else {
+        if(!(L>0)) L=Math.hypot(e[0]-s[0],e[1]-s[1]);
+        if(g.localName==='Spiral') nEsp++;
+        add(sta,s); add(sta+L,e);
+      }
+      sta+=L;
+    }
+    // superelevação do projeto: e total, início do giro do externo (0%) e início do e total
+    all(al,'Superelevation').forEach(z=>{
+      const a=num(z,'staStart'), b=num(z,'staEnd'), full=kNum(z,'FullSuperelev'), br=kNum(z,'BeginRunoffSta'), fs=kNum(z,'FullSuperSta');
+      const c=curvas.find(c=>a!=null&&b!=null?(a<=c.pt&&b>=c.pc):(br!=null&&Math.abs(br-c.pc)<500));
+      if(!c) return;
+      if(full!=null) c.e=Math.abs(full)<0.3?Math.abs(full)*100:Math.abs(full);
+      if(br!=null&&fs!=null&&fs>br){ c.le=fs-br; c.f=Math.min(1,Math.max(0,(c.pc-br)/c.le)); }
+    });
+    return pts.length>1?{nome:al.getAttribute('name')||('Alinhamento '+(ai+1)),pts,curvas,nEsp}:null;
+  }).filter(Boolean);
 }
 /*CORE-END*/
 
 const $=s=>document.querySelector(s);
 const KEY='greideCampo_v1';
-const COL={le:'#0a7d22',ld:'#b35400',ex:'#555555',gr:'#c2007a',grid:'#e3e3e3'};
+const COL={le:'#0a7d22',ld:'#b35400',ex:'#555555',gr:'#c2007a',pav:'#6b3fa0',grid:'#e3e3e3'};
 const HINT={
   livre:'Arraste os pontos do greide para cima ou para baixo. Toque num ponto para digitar a cota. Dois dedos = zoom.',
   piv:'Toque longo no perfil = novo PIV. Arraste um PIV para mover. Toque no PIV para editar ou excluir.',
   curva:'Igual a PIVs, com curva vertical em cada PIV. Toque no PIV para mudar o L.'
 };
 const rid=()=>Math.random().toString(36).slice(2,10);
-const newRow=est=>({id:rid(),est:est||'',manual:!!est,le:null,ex:null,ld:null,ole:null,old:null});
+const newRow=est=>({id:rid(),est:est||'',manual:!!est,le:null,ex:null,ld:null,ole:null,old:null,xy:null,pid:null});
+// N/E por ponto vindos do PNEZD: {le:[N,E], ...}
+function normXY(o){
+  if(!o||typeof o!=='object') return null;
+  const r={};
+  ['le','ex','ld','ole','old'].forEach(k=>{ const p=o[k]; if(Array.isArray(p)&&p.length===2&&isFinite(p[0])&&isFinite(p[1])) r[k]=[+p[0],+p[1]]; });
+  return Object.keys(r).length?r:null;
+}
+function normCurva(c){
+  const n=v=>(v==null||v===''||!isFinite(v))?null:+v;
+  return {id:c.id||rid(),pc:n(c.pc),pt:n(c.pt),ext:c.ext==='LE'||c.ext==='LD'?c.ext:null,e:n(c.e),le:n(c.le),f:n(c.f)==null?0.5:Math.min(1,Math.max(0,+c.f)),R:n(c.R)};
+}
 const numOrNull=v=>(v==null||v===''||!isFinite(v))?null:+v;
 const round3=v=>Math.round(v*1000)/1000;
 const fe=d=>fmtEst(d,S.cfg.interval);
@@ -547,7 +776,7 @@ const fmtIn=v=>v==null?'':String(+v.toFixed(4)).replace('.',',');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 function defState(){
-  return {cfg:{start:'0',interval:20,dir:1,incEixo:false,exag:10,tol:0.10,Ldef:40,dLE:3.5,dLD:3.5,it:2,sexag:5,fator:1,useOff:false,oLE:4.5,oLD:4.5},
+  return {cfg:{start:'0',interval:20,dir:1,incEixo:false,exag:10,tol:0.10,Ldef:40,dLE:3.5,dLD:3.5,it:2,sexag:5,fator:1,useOff:false,oLE:4.5,oLD:4.5,esp:0,gref:'topo',saida:'datum',curvas:[],eixo:null},
     rows:[0,0,0,0,0].map(()=>newRow()),mode:'livre',free:{},pivs:[]};
 }
 function normState(o){
@@ -555,12 +784,19 @@ function normState(o){
   if(!o||!Array.isArray(o.rows)) throw new Error('arquivo inválido');
   const s={
     cfg:Object.assign(d.cfg,o.cfg||{}),
-    rows:o.rows.map(r=>({id:r.id||rid(),est:r.est||'',manual:!!r.manual,le:numOrNull(r.le),ex:numOrNull(r.ex),ld:numOrNull(r.ld),ole:numOrNull(r.ole),old:numOrNull(r.old)})),
+    rows:o.rows.map(r=>{ const xy=normXY(r.xy); return {id:r.id||rid(),est:r.est||'',manual:!!r.manual,le:numOrNull(r.le),ex:numOrNull(r.ex),ld:numOrNull(r.ld),ole:numOrNull(r.ole),old:numOrNull(r.old),
+      xy,pid:xy&&r.pid&&typeof r.pid==='object'?r.pid:null}; }),
     mode:['livre','piv','curva'].includes(o.mode)?o.mode:'livre',
     free:(o.free&&typeof o.free==='object')?o.free:{},
     pivs:Array.isArray(o.pivs)?o.pivs.filter(p=>isFinite(p.x)&&isFinite(p.z)).map(p=>({x:+p.x,z:+p.z,L:isFinite(p.L)&&p.L>0?+p.L:d.cfg.Ldef})).sort((a,b)=>a.x-b.x):[]
   };
   if(!s.rows.length) s.rows=d.rows;
+  if(!['topo','datum'].includes(s.cfg.gref)) s.cfg.gref=d.cfg.gref;
+  if(!['topo','datum'].includes(s.cfg.saida)) s.cfg.saida=d.cfg.saida;
+  if(!(+s.cfg.esp>=0)) s.cfg.esp=0;
+  s.cfg.curvas=Array.isArray(s.cfg.curvas)?s.cfg.curvas.filter(c=>c&&typeof c==='object').map(normCurva):[];
+  const E=s.cfg.eixo;
+  s.cfg.eixo=E&&Array.isArray(E.pts)&&E.pts.length>1&&E.pts.every(p=>Array.isArray(p)&&p.length===3&&p.every(isFinite))?{nome:String(E.nome||'Eixo'),pts:E.pts}:null;
   return s;
 }
 function load(){
@@ -612,15 +848,17 @@ document.addEventListener('keydown',e=>{
 function afterLoad(){ renderGrid(); syncCfgUI(); refreshNow(); save(); }
 
 /* ---------- abas ---------- */
+const TABS=['dados','perfil','sec','planta','arq'];
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
 function showTab(t){
   curTab=t;
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
-  ['dados','perfil','sec','arq'].forEach(k=>$('#p-'+k).hidden=k!==t);
+  TABS.forEach(k=>$('#p-'+k).hidden=k!==t);
   try{localStorage.setItem(KEY+'_tab',t)}catch(e){}
   window.scrollTo(0,0);
   if(t==='perfil') resizeCv();
   if(t==='sec') resizeSv();
+  if(t==='planta'){ resizePv(); renderCurvas(); }
 }
 
 /* ---------- configuração ---------- */
@@ -634,6 +872,9 @@ function syncCfgUI(){
   $('#cDle').value=fmtIn(c.dLE); $('#cDld').value=fmtIn(c.dLD); $('#cIt').value=fmtIn(c.it); $('#cSexag').value=fmtIn(c.sexag);
   $('#cFator').value=fmtIn(c.fator); $('#cUseOff').checked=!!c.useOff; $('#cOle').value=fmtIn(c.oLE); $('#cOld').value=fmtIn(c.oLD);
   $('#offRow').hidden=$('#offHint').hidden=!c.useOff;
+  $('#cEsp').value=fmtIn(c.esp); $('#pavRow').hidden=$('#pavHint').hidden=!pavEsp(c);
+  $('#cGrT').classList.toggle('on',c.gref==='topo'); $('#cGrD').classList.toggle('on',c.gref==='datum');
+  $('#cSaT').classList.toggle('on',c.saida==='topo'); $('#cSaD').classList.toggle('on',c.saida==='datum');
   document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.m===S.mode));
   $('#mHint').textContent=HINT[S.mode];
   $('#pivRow').hidden=S.mode==='livre';
@@ -666,6 +907,25 @@ $('#cUseOff').onchange=e=>{ commit(); S.cfg.useOff=e.target.checked; syncCfgUI()
     commit(); S.cfg[k]=v; syncCfgUI(); refresh(); save();
   };
 });
+$('#cEsp').onchange=e=>{
+  const v=parseNum(e.target.value===''?'0':e.target.value);
+  if(!(v>=0&&v<=200)){toast('Espessura inválida');syncCfgUI();return}
+  commit(); S.cfg.esp=v; syncCfgUI(); refresh(); save();
+};
+// trocar a referência do greide mantém o projeto no lugar: PIVs e cotas livres mudam pela espessura
+function setGref(v){
+  if(S.cfg.gref===v) return;
+  commit();
+  const d=(v==='datum'?-1:1)*pavEsp(S.cfg);
+  S.pivs.forEach(p=>p.z=round3(p.z+d));
+  Object.keys(S.free).forEach(k=>S.free[k]=round3(S.free[k]+d));
+  S.cfg.gref=v; syncCfgUI(); refresh(); save();
+}
+function setSaida(v){ if(S.cfg.saida===v) return; commit(); S.cfg.saida=v; syncCfgUI(); refresh(); save(); }
+$('#cGrT').onclick=()=>setGref('topo');
+$('#cGrD').onclick=()=>setGref('datum');
+$('#cSaT').onclick=()=>setSaida('topo');
+$('#cSaD').onclick=()=>setSaida('datum');
 $('#cSexag').onchange=e=>{ const v=parseNum(e.target.value); if(v>0){S.cfg.sexag=v;save();drawSec()} syncCfgUI(); };
 $('#cTol').onchange=e=>{ const v=parseNum(e.target.value); if(v>=0){S.cfg.tol=v;save()} syncCfgUI(); };
 $('#cLdef').onchange=e=>{ const v=parseNum(e.target.value); if(v>0){S.cfg.Ldef=v;save()} syncCfgUI(); };
@@ -796,10 +1056,10 @@ $('#impNo').onclick=()=>$('#dlgImp').close();
 $('#impOk').onclick=()=>{
   if(!impPending||!impPending.rows.length) return;
   commit();
-  S.rows=impPending.rows.map(r=>Object.assign(newRow(fe(r.x)),{le:r.le,ex:r.ex,ld:r.ld,ole:r.ole,old:r.old}));
+  S.rows=impPending.rows.map(r=>Object.assign(newRow(fe(r.x)),{le:r.le,ex:r.ex,ld:r.ld,ole:r.ole,old:r.old,xy:r.xy||null,pid:r.pid||null}));
   if(impPending.rows.some(r=>r.ole!=null||r.old!=null)&&!S.cfg.useOff){ S.cfg.useOff=true; syncCfgUI(); toast('Offsets ativados — confira as distâncias na aba Dados'); }
   S.free={}; S.pivs=[]; sel=-1;
-  $('#dlgImp').close(); view.fit=true;
+  $('#dlgImp').close(); view.fit=true; pview.fit=true;
   renderGrid(); refresh(); save();
   toast(S.rows.length+' estacas importadas');
 };
@@ -812,13 +1072,19 @@ function caTd(d){
   return '<td'+(r>0?' class="A"':r<0?' class="C"':'')+'>'+caTxt(d)+'</td>';
 }
 function renderRes(){
-  const f3=v=>v==null?'—':fmt(v,3), off=!!S.cfg.useOff;
-  const hk='<tr><th>Estaca</th><th>Terr. LE</th><th>Terr. Eixo</th><th>Terr. LD</th><th>Greide eixo</th><th>Proj. LE</th><th>Proj. LD</th><th>LE C/A</th><th>Eixo C/A</th><th>LD C/A</th>'+
+  const f3=v=>v==null?'—':fmt(v,3), off=!!S.cfg.useOff, pav=!!pavEsp(S.cfg);
+  const sN=S.cfg.saida==='topo'?'Topo':'Datum', tB=S.cfg.gref==='topo';
+  // com pavimento: topo e datum do eixo (o desenhado em negrito) e bordos/C/A na superfície de cálculo
+  const hk='<tr><th>Estaca</th><th>Terr. LE</th><th>Terr. Eixo</th><th>Terr. LD</th>'+
+    (pav?'<th>Topo eixo</th><th>Datum eixo</th><th>'+sN+' LE</th><th>'+sN+' LD</th>':'<th>Greide eixo</th><th>Proj. LE</th><th>Proj. LD</th>')+
+    '<th>LE C/A</th><th>Eixo C/A</th><th>LD C/A</th>'+
     (off?'<th>Off LE C/A</th><th>Off LD C/A</th>':'')+'<th>Corte m²</th><th>Aterro m²</th></tr>';
-  if($('#rh').dataset.k!==hk){ $('#rh').innerHTML=hk; $('#rh').dataset.k=hk; $('#res').style.minWidth=off?'1060px':'920px'; }
+  if($('#rh').dataset.k!==hk){ $('#rh').innerHTML=hk; $('#rh').dataset.k=hk; $('#res').style.minWidth=(off?1060:920)+(pav?90:0)+'px'; }
+  const b=(v,on)=>on?'<td><b>'+f3(v)+'</b></td>':'<td>'+f3(v)+'</td>';
   let h='';
   for(const r of R.rows){
-    h+='<tr data-id="'+r.id+'"'+(r.id===hlId?' class="hl"':'')+'><td>'+esc(r.est)+'</td><td>'+f3(r.le)+'</td><td>'+f3(r.ex)+'</td><td>'+f3(r.ld)+'</td><td><b>'+f3(r.g)+'</b></td><td>'+f3(r.pLE)+'</td><td>'+f3(r.pLD)+'</td>'+caTd(r.dLE)+caTd(r.dEX)+caTd(r.dLD)+
+    h+='<tr data-id="'+r.id+'"'+(r.id===hlId?' class="hl"':'')+'><td>'+esc(r.est)+'</td><td>'+f3(r.le)+'</td><td>'+f3(r.ex)+'</td><td>'+f3(r.ld)+'</td>'+
+      (pav?b(r.gT,tB)+b(r.gD,!tB):b(r.g,true))+'<td>'+f3(r.pLE)+'</td><td>'+f3(r.pLD)+'</td>'+caTd(r.dLE)+caTd(r.dEX)+caTd(r.dLD)+
       (off?caTd(r.dOLE)+caTd(r.dOLD):'')+
       '<td class="C">'+(r.g==null?'—':fmt(r.cut,2))+'</td><td class="A">'+(r.g==null?'—':fmt(r.fill,2))+'</td></tr>';
   }
@@ -835,8 +1101,10 @@ function renderVol(){
   if(!v||(v.cut<=0&&v.fill<=0)){ $('#vol').innerHTML=''; return; }
   const s=v.cut-F*v.fill;
   const saldo=Math.abs(s)<0.05?'<b>compensado</b>':s>0?'sobra <b class="C">'+fmt(s,1)+' m³</b> de corte':'falta <b class="C">'+fmt(-s,1)+' m³</b> de corte (sobra aterro)';
-  $('#vol').innerHTML='Corte <b class="C">'+fmt(v.cut,1)+' m³</b> · Aterro <b class="A">'+fmt(v.fill,1)+' m³</b>'+
-    (F!==1?' (× '+fmt(F,2)+' = '+fmt(F*v.fill,1)+' m³)':'')+'<br>Saldo: '+saldo;
+  const pav=pavEsp(S.cfg);
+  $('#vol').innerHTML=(pav?'No '+(S.cfg.saida==='topo'?'topo':'datum')+': ':'')+'Corte <b class="C">'+fmt(v.cut,1)+' m³</b> · Aterro <b class="A">'+fmt(v.fill,1)+' m³</b>'+
+    (F!==1?' (× '+fmt(F,2)+' = '+fmt(F*v.fill,1)+' m³)':'')+'<br>Saldo: '+saldo+
+    (pav?'<br>Pavimento ('+fmt(pav*100,1)+' cm × '+fmt((+S.cfg.dLE||0)+(+S.cfg.dLD||0),2)+' m): <b>'+fmt(v.pav,1)+' m³</b>':'');
 }
 $('#bOpt').onclick=()=>{
   R=calcState(S);
@@ -853,7 +1121,10 @@ $('#bOpt').onclick=()=>{
 };
 let rq=false;
 function refresh(){ if(rq) return; rq=true; requestAnimationFrame(()=>{rq=false;refreshNow()}); }
-function refreshNow(){ R=calcState(S); renderRes(); draw(); if(curTab==='sec') drawSec(); }
+function refreshNow(){
+  R=calcState(S); renderRes(); draw(); if(curTab==='sec') drawSec();
+  if(curTab==='planta'){ drawPlan(); if(!$('#curvas').contains(document.activeElement)) renderCurvas(); }
+}
 $('#rb').addEventListener('click',e=>{
   const tr=e.target.closest('tr[data-id]');
   if(!tr) return;
@@ -919,7 +1190,7 @@ else window.addEventListener('resize',()=>{ if(curTab==='perfil') resizeCv(); })
 function fitView(){
   view.fit=true;
   const xs=[], zs=[];
-  R.pts.forEach(p=>{ xs.push(p.x); ['le','ex','ld','g','pLE','pLD'].forEach(k=>{ if(p[k]!=null) zs.push(p[k]); }); });
+  R.pts.forEach(p=>{ xs.push(p.x); ['le','ex','ld','g','gT','gD','pLE','pLD'].forEach(k=>{ if(p[k]!=null) zs.push(p[k]); }); });
   if(S.mode!=='livre') S.pivs.forEach(p=>{xs.push(p.x);zs.push(p.z)});
   if(!xs.length||!W){view.ox=0;view.oz=0;view.sx=1;return}
   let x0=Math.min(...xs), x1=Math.max(...xs), z0=Math.min(...zs), z1=Math.max(...zs);
@@ -1005,7 +1276,10 @@ function draw(){
     frame(); return;
   }
   poly('le',COL.le,2,[]); poly('ex',COL.ex,1.5,[6,4]); poly('ld',COL.ld,2,[]);
-  if(+S.cfg.it){ poly('pLE',COL.gr,1.5,[4,4]); if(S.cfg.dLD!==S.cfg.dLE) poly('pLD',COL.gr,1.5,[4,4]); }
+  const sup=S.cfg.curvas.length>0;
+  if(+S.cfg.it||sup){ poly('pLE',COL.gr,1.5,[4,4]); if(S.cfg.dLD!==S.cfg.dLE||sup) poly('pLD',COL.gr,1.5,[4,4]); }
+  // eixo da outra face do pavimento (datum se o greide é o topo, e vice-versa)
+  if(pavEsp(S.cfg)) poly(S.cfg.gref==='topo'?'gD':'gT',COL.pav,2,[2,3]);
 
   const pv=S.pivs, xa=Math.min(R.pts.length?R.pts[0].x:Infinity,pv.length?pv[0].x:Infinity),
         xb=Math.max(R.pts.length?R.pts[R.pts.length-1].x:-Infinity,pv.length?pv[pv.length-1].x:-Infinity);
@@ -1076,14 +1350,19 @@ function frame(){
   ctx.strokeRect(PAD.l,PAD.t,W-PAD.l-PAD.r,H-PAD.t-PAD.b);
 }
 function legend(){
-  const it=[['LE',COL.le,[]],['Eixo',COL.ex,[6,4]],['LD',COL.ld,[]],['Greide',COL.gr,[]]];
+  const pav=pavEsp(S.cfg), tp=S.cfg.gref==='topo';
+  const it=[['LE',COL.le,[]],['Eixo',COL.ex,[6,4]],['LD',COL.ld,[]],[pav?(tp?'Greide=topo':'Greide=datum'):'Greide',COL.gr,[]]];
+  if(pav) it.push([tp?'Datum':'Topo',COL.pav,[2,3]]);
   ctx.font='12px system-ui,sans-serif'; ctx.textAlign='left'; ctx.textBaseline='middle';
-  let x=PAD.l; const y=PAD.t/2;
+  // compacta a legenda quando não cabe (celular em pé)
+  const vw=ctx.measureText('V 10x').width+8, need=k=>it.reduce((s,[t])=>s+k[0]+4+ctx.measureText(t).width+k[1],0);
+  const k=PAD.l+need([20,14])<=W-PAD.r-vw?[20,14]:[14,8];
+  let x=PAD.l+need(k)<=W-PAD.r-vw?PAD.l:6; const y=PAD.t/2;
   it.forEach(([t,c,d])=>{
-    ctx.strokeStyle=c; ctx.lineWidth=t==='Greide'?3:2; ctx.setLineDash(d);
-    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+20,y); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='#000'; ctx.fillText(t,x+24,y);
-    x+=24+ctx.measureText(t).width+14;
+    ctx.strokeStyle=c; ctx.lineWidth=c===COL.gr?3:2; ctx.setLineDash(d);
+    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+k[0],y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle='#000'; ctx.fillText(t,x+k[0]+4,y);
+    x+=k[0]+4+ctx.measureText(t).width+k[1];
   });
   ctx.textAlign='right'; ctx.fillStyle='#333'; ctx.fillText('V '+fmt(S.cfg.exag,0)+'x',W-PAD.r,y);
 }
@@ -1092,10 +1371,11 @@ function dragLabel(){
   const g=S.mode==='livre'?di.g:gAtX(x);
   const lines=[['Est. '+fe(x),'#000'],['Greide eixo '+(g==null?'—':fmt(g,3)),COL.gr]];
   if(di.piv&&S.mode==='curva') lines.push(['PIV '+fmt(di.piv.z,3),'#7a0050']);
-  const it=(+S.cfg.it||0)/100;
-  [['LE','le',S.cfg.dLE],['Eixo','ex',0],['LD','ld',S.cfg.dLD]].forEach(([n,k,dd])=>{
+  const sl=slopesAt(x,S.cfg), sh=pavShift(S.cfg);
+  if(pavEsp(S.cfg)&&g!=null) lines.push([(S.cfg.gref==='topo'?'Datum eixo ':'Topo eixo ')+fmt(g+(S.cfg.gref==='topo'?-1:1)*pavEsp(S.cfg),3),COL.pav]);
+  [['LE','le',S.cfg.dLE,sl.l],['Eixo','ex',0,0],['LD','ld',S.cfg.dLD,sl.r]].forEach(([n,k,dd,q])=>{
     const t=terrAt(k,x); if(t==null||g==null) return;
-    const v=g-it*(+dd||0)-t, d=Math.round(v*100)/100;
+    const v=g+sh-q*(+dd||0)-t, d=Math.round(v*100)/100;
     lines.push([n+' '+caTxt(v),d>0?'#0047d6':d<0?'#c40000':'#000']);
   });
   ctx.font='bold 14px system-ui,sans-serif';
@@ -1311,11 +1591,13 @@ function drawSec(){
     sText('Sem dados — digite as cotas na aba Dados',SW/2,SH/2,'#333','center','15px system-ui,sans-serif');
     $('#sInfo').innerHTML=''; return;
   }
-  const p=L[i], dl=+S.cfg.dLE||0, dr=+S.cfg.dLD||0, ex=+S.cfg.sexag||1, it=+S.cfg.it||0;
+  const p=L[i], dl=+S.cfg.dLE||0, dr=+S.cfg.dLD||0, ex=+S.cfg.sexag||1;
   const geo=p.geo||secGeom(p,S.cfg), terr=geo.terr, xl=geo.xl, xr=geo.xr;
-  const pAt=x=>p.g-it/100*Math.abs(x);
-  const proj=[[xl,pAt(xl)],[0,p.g],[xr,pAt(xr)]];
-  const zs=proj.map(q=>q[1]).concat(terr.map(q=>q[1]));
+  const sl=p.sl, pAt=x=>p.gc-sideDrop(sl,x)*Math.abs(x);
+  const proj=[[xl,pAt(xl)],[0,p.gc],[xr,pAt(xr)]];
+  // camada do pavimento na largura da pista (entre os bordos)
+  const esp=pavEsp(S.cfg), lay=esp?[[-dl,p.gT],[0,p.gT],[dr,p.gT]].map(([x,g])=>[x,g-sideDrop(sl,x)*Math.abs(x)]):null;
+  const zs=proj.map(q=>q[1]).concat(terr.map(q=>q[1]),lay?lay.map(q=>q[1]-esp).concat(lay.map(q=>q[1])):[]);
   let z0=Math.min(...zs), z1=Math.max(...zs);
   if(z1-z0<0.2){const m=(z0+z1)/2;z0=m-0.1;z1=m+0.1}
   const tx0=Math.min(xl,terr.length?terr[0][0]:xl), tx1=Math.max(xr,terr.length?terr[terr.length-1][0]:xr);
@@ -1341,6 +1623,16 @@ function drawSec(){
   c.strokeStyle='#7a4a00'; c.lineWidth=2.5; c.beginPath();
   terr.forEach((q,k)=>k?c.lineTo(X(q[0]),Y(q[1])):c.moveTo(X(q[0]),Y(q[1]))); c.stroke();
   terr.forEach(q=>{ c.beginPath(); c.arc(X(q[0]),Y(q[1]),4,0,7); c.fillStyle='#7a4a00'; c.fill(); });
+  if(lay){
+    c.fillStyle='rgba(60,60,60,.30)'; c.beginPath();
+    lay.forEach((q,k)=>k?c.lineTo(X(q[0]),Y(q[1])):c.moveTo(X(q[0]),Y(q[1])));
+    lay.slice().reverse().forEach(q=>c.lineTo(X(q[0]),Y(q[1]-esp)));
+    c.closePath(); c.fill();
+    // a face que não é a superfície de cálculo, em linha fina
+    const o=S.cfg.saida==='topo'?esp:0;
+    c.strokeStyle=COL.pav; c.lineWidth=2; c.setLineDash([3,3]); c.beginPath();
+    lay.forEach((q,k)=>k?c.lineTo(X(q[0]),Y(q[1]-o)):c.moveTo(X(q[0]),Y(q[1]-o))); c.stroke(); c.setLineDash([]);
+  }
   // projeto
   c.strokeStyle=COL.gr; c.lineWidth=4; c.beginPath();
   proj.forEach((q,k)=>k?c.lineTo(X(q[0]),Y(q[1])):c.moveTo(X(q[0]),Y(q[1]))); c.stroke();
@@ -1354,10 +1646,11 @@ function drawSec(){
     c.strokeStyle='#777'; c.lineWidth=1; c.setLineDash([3,3]); c.beginPath(); c.moveTo(px,py); c.lineTo(px,Y(pAt(x))); c.stroke(); c.setLineDash([]);
   });
   // inclinações
-  if(dl>0) sText('◄ '+fmt(it,2)+'%',X(-dl/2),Y(pAt(-dl/2))-16,'#7a0050');
-  if(dr>0) sText(fmt(it,2)+'% ►',X(dr/2),Y(pAt(dr/2))-16,'#7a0050');
+  // seta para o lado que desce
+  if(dl>0) sText(sl.l>=0?'◄ '+fmt(sl.l*100,2)+'%':fmt(-sl.l*100,2)+'% ►',X(-dl/2),Y(pAt(-dl/2))-16,'#7a0050');
+  if(dr>0) sText(sl.r>=0?fmt(sl.r*100,2)+'% ►':'◄ '+fmt(-sl.r*100,2)+'%',X(dr/2),Y(pAt(dr/2))-16,'#7a0050');
   // faixas de rótulos
-  const cols=[[-dl,'left',p.pLE,p.le,p.dLE],[0,'center',p.g,p.ex,p.dEX],[dr,'right',p.pLD,p.ld,p.dLD]];
+  const cols=[[-dl,'left',p.pLE,p.le,p.dLE],[0,'center',p.gc,p.ex,p.dEX],[dr,'right',p.pLD,p.ld,p.dLD]];
   cols.forEach(([x,al,zp,zt,d])=>{
     const px=al==='left'?Math.max(4,X(x)-6):al==='right'?Math.min(SW-4,X(x)+6):X(x);
     sText(fmt(zp,3),px,PT-14,COL.gr,al);
@@ -1367,20 +1660,341 @@ function drawSec(){
   if(dl>0) sText(fmt(dl,2)+' m',X(-dl/2),SH-10,'#333','center','12px system-ui,sans-serif');
   if(dr>0) sText(fmt(dr,2)+' m',X(dr/2),SH-10,'#333','center','12px system-ui,sans-serif');
   sText('Estaca '+p.est,6,16,'#000','left','bold 16px system-ui,sans-serif');
-  sText('V '+fmt(ex,0)+'x',SW-6,16,'#333','right','12px system-ui,sans-serif');
+  sText((esp?'Pav. '+fmt(esp*100,1)+' cm · cotas no '+(S.cfg.saida==='topo'?'topo':'datum')+' · ':'')+'V '+fmt(ex,0)+'x',SW-6,16,esp?COL.pav:'#333','right','12px system-ui,sans-serif');
 
-  const f3=v=>v==null?'—':fmt(v,3);
+  const f3=v=>v==null?'—':fmt(v,3), a0=(+S.cfg.it||0)/100;
+  const supP=Math.abs(sl.l-a0)>1e-9||Math.abs(sl.r-a0)>1e-9?'<p class="hint"><b>Superelevação:</b> LE '+inclUI(sl.l)+'% · LD '+inclUI(sl.r)+'% (+ sobe para fora do eixo)</p>':'';
+  if(esp){
+    // terreno, topo, datum e C/A na superfície de cálculo
+    const tb=d=>p.gT-sideDrop(sl,d)*Math.abs(d), lin=[['LE',p.le,tb(-dl),p.dLE],['Eixo',p.ex,p.gT,p.dEX],['LD',p.ld,tb(dr),p.dLD]];
+    $('#sInfo').innerHTML=supP+'<table><tr><th></th><th>Terreno</th><th>Topo</th><th>Datum</th><th>C/A '+(S.cfg.saida==='topo'?'topo':'datum')+'</th></tr>'+
+      lin.map(([n,t,z,d])=>'<tr><td>'+n+'</td><td>'+f3(t)+'</td><td>'+f3(z)+'</td><td>'+f3(z-esp)+'</td>'+caTd(d)+'</tr>').join('')+
+      (S.cfg.useOff?[['Off LE',p.ole,p.pOLE,p.dOLE],['Off LD',p.old,p.pOLD,p.dOLD]].map(([n,t,z,d])=>'<tr><td>'+n+'</td><td>'+f3(t)+'</td><td colspan="2">'+f3(z)+'</td>'+caTd(d)+'</tr>').join(''):'')+
+      '<tr><td>Área</td><td colspan="4"><span class="C">corte '+fmt(p.cut,2)+' m²</span> · <span class="A">aterro '+fmt(p.fill,2)+' m²</span></td></tr></table>';
+    return;
+  }
   const lin=[['LE',p.le,p.pLE,p.dLE],['Eixo',p.ex,p.g,p.dEX],['LD',p.ld,p.pLD,p.dLD]];
   if(S.cfg.useOff){ lin.unshift(['Off LE',p.ole,p.pOLE,p.dOLE]); lin.push(['Off LD',p.old,p.pOLD,p.dOLD]); }
-  $('#sInfo').innerHTML='<table><tr><th></th><th>Terreno</th><th>Projeto</th><th>C/A</th></tr>'+
+  $('#sInfo').innerHTML=supP+'<table><tr><th></th><th>Terreno</th><th>Projeto</th><th>C/A</th></tr>'+
     lin.map(([n,t,z,d])=>'<tr><td>'+n+'</td><td>'+f3(t)+'</td><td>'+f3(z)+'</td>'+caTd(d)+'</tr>').join('')+
     '<tr><td>Área</td><td colspan="3"><span class="C">corte '+fmt(p.cut,2)+' m²</span> · <span class="A">aterro '+fmt(p.fill,2)+' m²</span></td></tr></table>';
 }
 
+/* ---------- planta e curvas com superelevação ---------- */
+const pv=$('#pv'), pctx=pv.getContext('2d');
+let PW=0, PH=0, pdpr=1, plId=null, curAct=-1;
+const pview={cn:0,ce:0,s:1,fit:true};
+const PX=e=>PW/2+(e-pview.ce)*pview.s, PY=n=>PH/2-(n-pview.cn)*pview.s;
+const IPE=x=>(x-PW/2)/pview.s+pview.ce, IPN=y=>pview.cn-(y-PH/2)/pview.s;
+function resizePv(){
+  const r=pv.getBoundingClientRect();
+  if(!r.width) return;
+  pdpr=window.devicePixelRatio||1; PW=r.width; PH=r.height;
+  pv.width=Math.round(PW*pdpr); pv.height=Math.round(PH*pdpr);
+  R=calcState(S); drawPlan();
+}
+if(window.ResizeObserver) new ResizeObserver(()=>{ if(curTab==='planta') resizePv(); }).observe(pv);
+else window.addEventListener('resize',()=>{ if(curTab==='planta') resizePv(); });
+function planPts(){
+  const out=[];
+  R.rows.forEach(r=>{ if(r.x==null||!r.xy) return; ['ole','le','ex','ld','old'].forEach(k=>{ const p=r.xy[k]; if(p) out.push({r,k,n:p[0],e:p[1]}); }); });
+  return out;
+}
+// eixo da planta: o do XML, se importado; senão o reconstruído dos pontos medidos
+function planAxis(){
+  const E=S.cfg.eixo;
+  return E?E.pts.map(p=>({x:p[0],n:p[1],e:p[2]})):axisPts(R.rows);
+}
+function fitPlan(){
+  pview.fit=true;
+  const P=planPts().concat(S.cfg.eixo?planAxis():[]);
+  if(!P.length||!PW) return;
+  let n0=Infinity,n1=-Infinity,e0=Infinity,e1=-Infinity;
+  P.forEach(p=>{n0=Math.min(n0,p.n);n1=Math.max(n1,p.n);e0=Math.min(e0,p.e);e1=Math.max(e1,p.e)});
+  pview.cn=(n0+n1)/2; pview.ce=(e0+e1)/2;
+  pview.s=Math.min((PW-50)/Math.max(e1-e0,10),(PH-60)/Math.max(n1-n0,10));
+}
+function pText(t,x,y,color,align){
+  const c=pctx;
+  c.textAlign=align||'left'; c.textBaseline='middle';
+  c.lineWidth=4; c.strokeStyle='#fff'; c.strokeText(t,x,y);
+  c.fillStyle=color; c.fillText(t,x,y);
+}
+function plRows(){ return R.rows.filter(r=>r.x!=null).sort((a,b)=>a.x-b.x); }
+function drawPlan(){
+  const sel=$('#plSel'), L=plRows();
+  const opts=L.map(r=>'<option value="'+r.id+'">Estaca '+esc(r.est)+'</option>').join('');
+  if(sel.dataset.k!==opts){ sel.innerHTML=opts; sel.dataset.k=opts; }
+  if(!L.some(r=>r.id===plId)) plId=L.length?L[0].id:null;
+  sel.value=plId||'';
+  const i=L.findIndex(r=>r.id===plId);
+  $('#plPrev').disabled=i<=0; $('#plNext').disabled=i<0||i>=L.length-1;
+  $('#bPC').disabled=$('#bPT').disabled=i<0;
+  const P=planPts(), ax=planAxis(), axM=axisPts(R.rows), X=S.cfg.eixo;
+  $('#plHint').textContent=P.length||X?'Toque num ponto para escolher a estaca. Arraste para mover; dois dedos ou roda do mouse para zoom.':
+    'Sem coordenadas: importe o PNEZD da coletora ou o eixo LandXML para ver a planta. Dá para marcar o PC e o PT pelo seletor de estacas abaixo.';
+  $('#bXmlDel').hidden=!X;
+  $('#xmlInfo').textContent=X?'Eixo XML: '+X.nome+' — estacas '+fe(X.pts[0][0])+' a '+fe(X.pts[X.pts.length-1][0])+(P.length?'. Os pontos da coletora devem cair em cima dele; se não caírem, confira a estaca inicial.':'.'):
+    'O LandXML do projeto (Civil 3D: Exportar para LandXML) traz o eixo e as curvas com PC, PT, raio e lado externo, e a superelevação se ela estiver no alinhamento.';
+  if(!PW||!PH) return;
+  const c=pctx;
+  c.setTransform(pdpr,0,0,pdpr,0,0); c.fillStyle='#fff'; c.fillRect(0,0,PW,PH);
+  c.font='13px system-ui,sans-serif';
+  if(!P.length&&!X){ pText('Sem coordenadas (importe o PNEZD ou o XML)',PW/2,PH/2,'#333','center'); return; }
+  if(pview.fit) fitPlan();
+  const a=(+S.cfg.it||0)/100;
+  // trecho do eixo entre duas estacas
+  const seg=(x0,x1,color,w)=>{
+    const pts=[], p0=axisAt(ax,x0), p1=axisAt(ax,x1);
+    if(p0) pts.push(p0);
+    ax.forEach(q=>{ if(q.x>x0&&q.x<x1) pts.push([q.n,q.e]); });
+    if(p1) pts.push(p1);
+    if(pts.length<2) return;
+    c.strokeStyle=color; c.lineWidth=w; c.lineCap='round'; c.lineJoin='round'; c.beginPath();
+    pts.forEach((q,k)=>k?c.lineTo(PX(q[1]),PY(q[0])):c.moveTo(PX(q[1]),PY(q[0]))); c.stroke(); c.lineCap='butt';
+  };
+  // curvas: giro em rosa claro, PC–PT em rosa forte
+  S.cfg.curvas.forEach((cv,ci)=>{
+    const k=curveKeys(cv,a);
+    if(k) seg(k.x0,k.x3,'rgba(194,0,122,.20)',16);
+    if(cv.pc!=null&&cv.pt!=null&&cv.pt>cv.pc) seg(cv.pc,cv.pt,ci===curAct?COL.gr:'rgba(194,0,122,.55)',7);
+  });
+  // eixo
+  c.strokeStyle='#555'; c.lineWidth=1.5; c.setLineDash([6,4]); c.beginPath();
+  ax.forEach((q,k)=>k?c.lineTo(PX(q.e),PY(q.n)):c.moveTo(PX(q.e),PY(q.n))); c.stroke(); c.setLineDash([]);
+  // pontos medidos (offsets vazados)
+  const cor={le:COL.le,ld:COL.ld,ex:COL.ex,ole:COL.le,old:COL.ld};
+  P.forEach(p=>{
+    c.beginPath(); c.arc(PX(p.e),PY(p.n),p.k[0]==='o'?3.5:4.5,0,7);
+    if(p.k[0]==='o'){c.strokeStyle=cor[p.k];c.lineWidth=2;c.stroke()} else {c.fillStyle=cor[p.k];c.fill()}
+  });
+  // estacas
+  c.font='12px system-ui,sans-serif';
+  let last=null;
+  const lb=axM.length?axM.map(q=>({p:axisAt(ax,q.x)||[q.n,q.e],t:q.r.est})):ax.filter((q,k)=>k===0||Math.floor(q.x/S.cfg.interval+1e-6)>Math.floor(ax[k-1].x/S.cfg.interval+1e-6)).map(q=>({p:[q.n,q.e],t:fe(q.x)}));
+  lb.forEach(o=>{
+    const x=PX(o.p[1]), y=PY(o.p[0]);
+    if(last&&Math.hypot(x-last[0],y-last[1])<46) return;
+    last=[x,y];
+    if(x+7+c.measureText(o.t).width>PW-4) pText(o.t,x-7,y-10,'#000','right'); else pText(o.t,x+7,y-10,'#000');
+  });
+  // PC e PT
+  c.font='bold 12px system-ui,sans-serif';
+  S.cfg.curvas.forEach((cv,ci)=>[[cv.pc,'PC'],[cv.pt,'PT']].forEach(([x,t])=>{
+    if(x==null) return;
+    const p=axisAt(ax,x); if(!p) return;
+    const px=PX(p[1]), py=PY(p[0]);
+    c.fillStyle='#000'; c.fillRect(px-4,py-4,8,8);
+    pText(t+(ci+1),px+8,py+12,COL.gr);
+  }));
+  // estaca escolhida
+  const sr=L[i];
+  const sp=sr&&(axisAt(ax,sr.x)||(sr.xy&&(sr.xy.ex||sr.xy.le||sr.xy.ld)));
+  if(sp){
+    const p=sp;
+    c.beginPath(); c.arc(PX(p[1]),PY(p[0]),11,0,7); c.lineWidth=3; c.strokeStyle='#000'; c.stroke();
+  }
+  // escala e norte
+  const sm=niceStep(90/pview.s), sw=sm*pview.s;
+  c.strokeStyle='#000'; c.lineWidth=2; c.beginPath(); c.moveTo(12,PH-14); c.lineTo(12+sw,PH-14); c.moveTo(12,PH-19); c.lineTo(12,PH-9); c.moveTo(12+sw,PH-19); c.lineTo(12+sw,PH-9); c.stroke();
+  c.font='12px system-ui,sans-serif'; pText(fmt(sm,sm<1?1:0)+' m',12+sw/2,PH-26,'#000','center');
+  c.font='bold 13px system-ui,sans-serif'; pText('N ↑',PW-8,16,'#000','right');
+}
+// toque: arrastar, pinça, toque para escolher
+const pptr=new Map();
+let pg=null;
+function ppos(e){ const r=pv.getBoundingClientRect(); return {x:e.clientX-r.left,y:e.clientY-r.top}; }
+pv.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  try{pv.setPointerCapture(e.pointerId)}catch(_){}
+  const p=ppos(e); pptr.set(e.pointerId,p);
+  if(pptr.size===2){
+    const [a,b]=[...pptr.values()], m={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    pg={t:'pinch',d0:Math.hypot(a.x-b.x,a.y-b.y)||1,s0:pview.s,we:IPE(m.x),wn:IPN(m.y)};
+    return;
+  }
+  if(pptr.size>2) return;
+  pg={t:'pan',p0:p,ce:pview.ce,cn:pview.cn,moved:false};
+});
+pv.addEventListener('pointermove',e=>{
+  if(!pptr.has(e.pointerId)) return;
+  const p=ppos(e); pptr.set(e.pointerId,p);
+  if(!pg) return;
+  if(pg.t==='pinch'){
+    if(pptr.size<2) return;
+    const [a,b]=[...pptr.values()], m={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    pview.s=Math.min(1e4,Math.max(1e-4,pg.s0*Math.hypot(a.x-b.x,a.y-b.y)/pg.d0));
+    pview.ce=pg.we-(m.x-PW/2)/pview.s; pview.cn=pg.wn+(m.y-PH/2)/pview.s;
+    pview.fit=false; drawPlan(); return;
+  }
+  if(pg.t!=='pan') return;
+  const dx=p.x-pg.p0.x, dy=p.y-pg.p0.y;
+  if(!pg.moved&&Math.hypot(dx,dy)>6) pg.moved=true;
+  if(!pg.moved) return;
+  pview.ce=pg.ce-dx/pview.s; pview.cn=pg.cn+dy/pview.s; pview.fit=false; drawPlan();
+});
+function pEnd(e,cancel){
+  if(!pptr.has(e.pointerId)) return;
+  pptr.delete(e.pointerId);
+  if(pg&&pg.t==='pan'&&!pg.moved&&!cancel){
+    const p=pg.p0; let best=null, bd=26;
+    planPts().forEach(q=>{ const d=Math.hypot(PX(q.e)-p.x,PY(q.n)-p.y); if(d<bd){bd=d;best=q} });
+    if(best){ plId=best.r.id; drawPlan(); }
+  }
+  if(pg&&pg.t==='pinch'){ pg=pptr.size?{t:'none'}:null; return; }
+  if(!pptr.size) pg=null;
+}
+pv.addEventListener('pointerup',e=>pEnd(e,false));
+pv.addEventListener('pointercancel',e=>pEnd(e,true));
+pv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const p=ppos(e), we=IPE(p.x), wn=IPN(p.y);
+  pview.s=Math.min(1e4,Math.max(1e-4,pview.s*(e.deltaY<0?1.15:1/1.15)));
+  pview.ce=we-(p.x-PW/2)/pview.s; pview.cn=wn+(p.y-PH/2)/pview.s; pview.fit=false; drawPlan();
+},{passive:false});
+pv.addEventListener('dblclick',()=>{ fitPlan(); drawPlan(); });
+$('#plSel').onchange=e=>{ plId=e.target.value; drawPlan(); };
+function stepPl(d){ const L=plRows(), i=L.findIndex(r=>r.id===plId); if(!L.length) return; plId=L[Math.max(0,Math.min(L.length-1,i+d))].id; drawPlan(); }
+$('#plPrev').onclick=()=>stepPl(-1);
+$('#plNext').onclick=()=>stepPl(1);
+
+// PC/PT na estaca escolhida: completa a curva ativa ou abre uma nova
+const novaCurva=()=>normCurva({e:4,le:20,f:0.5});
+function markCurve(k){
+  const r=R.rows.find(r=>r.id===plId);
+  if(!r||r.x==null) return;
+  commit();
+  const C=S.cfg.curvas;
+  let c=C[curAct];
+  if(!c||(k==='pc'&&c.pc!=null&&c.pt!=null)){ c=novaCurva(); C.push(c); curAct=C.length-1; }
+  c[k]=r.x;
+  if(c.pc!=null&&c.pt!=null&&c.pt<c.pc){ const t=c.pc; c.pc=c.pt; c.pt=t; }
+  let msg=(k==='pc'?'PC':'PT')+' da curva '+(curAct+1)+' na estaca '+r.est;
+  if(c.pc!=null&&c.pt!=null&&!c.ext){
+    const g=curveFromPlan(R.rows,c.pc,c.pt);
+    if(g){ c.ext=g.ext; msg+=' · curva à '+(g.dir==='D'?'direita':'esquerda')+', externo '+g.ext; }
+  }
+  refreshNow(); renderCurvas(); save(); toast(msg);
+}
+$('#bPC').onclick=()=>markCurve('pc');
+$('#bPT').onclick=()=>markCurve('pt');
+$('#bCurva').onclick=()=>{ commit(); S.cfg.curvas.push(novaCurva()); curAct=S.cfg.curvas.length-1; refreshNow(); renderCurvas(); save(); };
+
+function renderCurvas(){
+  const C=S.cfg.curvas, a=(+S.cfg.it||0)/100, box=$('#curvas');
+  if(curAct>=C.length) curAct=C.length-1;
+  if(!C.length){
+    box.innerHTML='<p class="hint">Nenhuma curva. Escolha a estaca na planta ou no seletor e toque em <b>PC nesta estaca</b> e depois em <b>PT nesta estaca</b> — ou toque em <b>+ Curva</b> e digite.</p>';
+    return;
+  }
+  const ws=curveWarnings(S.cfg), v=x=>x==null?'':fe(x);
+  let h=ws.length?'<p class="warn">'+ws.map(esc).join('<br>')+'</p>':'';
+  C.forEach((c,i)=>{
+    const k=curveKeys(c,a), g=c.pc!=null&&c.pt!=null?curveFromPlan(R.rows,c.pc,c.pt):null;
+    h+='<div class="curva'+(i===curAct?' on':'')+'" data-i="'+i+'"><h3>Curva '+(i+1)+'</h3>'+
+      '<div class="row"><label>PC (estaca)<input data-k="pc" autocomplete="off" value="'+esc(v(c.pc))+'"></label>'+
+      '<label>PT (estaca)<input data-k="pt" autocomplete="off" value="'+esc(v(c.pt))+'"></label></div>'+
+      '<div class="row"><label>Lado externo (o que sobe)<div class="seg"><button data-ext="LE"'+(c.ext==='LE'?' class="on"':'')+'>LE</button><button data-ext="LD"'+(c.ext==='LD'?' class="on"':'')+'>LD</button></div></label></div>'+
+      '<div class="row"><label>e (%)<input data-k="e" inputmode="decimal" autocomplete="off" value="'+fmtIn(c.e)+'"></label>'+
+      '<label>Transição 0 → e (m)<input data-k="le" inputmode="decimal" autocomplete="off" value="'+fmtIn(c.le)+'"></label>'+
+      '<label>Antes do PC (%)<input data-k="f" inputmode="decimal" autocomplete="off" value="'+fmtIn(Math.round(c.f*1000)/10)+'"></label></div>';
+    if(c.R) h+='<p class="hint">Do eixo XML: R = '+fmt(c.R,2)+' m, desenvolvimento '+(c.pc!=null&&c.pt!=null?fmt(c.pt-c.pc,2):'—')+' m.</p>';
+    if(g) h+='<p class="hint">Pela planta: curva à '+(g.dir==='D'?'direita':'esquerda')+', deflexão '+fmt(g.defl,1)+'°'+(g.R?', R ≈ '+fmt(g.R,0)+' m':'')+
+      ', lado externo '+g.ext+(g.conf?'':' (sem pontos LE para conferir o lado)')+'.</p>';
+    if(g&&c.ext&&g.ext!==c.ext) h+='<p class="warn">O lado externo escolhido ('+c.ext+') não bate com a planta ('+g.ext+'). Confira.</p>';
+    if(!k){
+      const f=[];
+      if(c.pc==null) f.push('PC'); if(c.pt==null) f.push('PT');
+      if(c.pc!=null&&c.pt!=null&&!(c.pt>c.pc)) f.push('PT depois do PC');
+      if(!c.ext) f.push('lado externo'); if(!(c.e>0)) f.push('e'); if(!(c.le>0)) f.push('transição');
+      h+='<p class="warn">Falta: '+f.join(', ')+'. Sem isso a curva não entra na conta.</p>';
+    } else {
+      // tabela de conferência (como no croqui): pontos notáveis e estacas medidas dentro do giro
+      const one={it:S.cfg.it,curvas:[c]}, m=new Map();
+      curveMarks(c,a).forEach(([x,t])=>{ const key=x.toFixed(3); m.set(key,{x,t:(m.get(key)?m.get(key).t+' / ':'')+t,k:true}); });
+      R.rows.forEach(r=>{ if(r.x!=null&&r.x>k.x0&&r.x<k.x3){ const key=r.x.toFixed(3); if(!m.has(key)) m.set(key,{x:r.x,t:'',k:false}); } });
+      const lin=[...m.values()].sort((p,q)=>p.x-q.x);
+      h+='<table><tr><th>Estaca</th><th>Ponto</th><th>LE %</th><th>LD %</th></tr>'+lin.map(o=>{ const s=slopesAt(o.x,one);
+        return '<tr'+(o.k?' class="k"':'')+'><td>'+fe(o.x)+'</td><td>'+esc(o.t)+'</td><td>'+inclUI(s.l)+'</td><td>'+inclUI(s.r)+'</td></tr>'; }).join('')+'</table>'+
+        '<p class="hint">% com sinal: + sobe para fora do eixo, − desce. Em rosa, os pontos do giro (para locar). Corte, aterro e volumes usam só as estacas da tabela de dados.</p>';
+    }
+    h+='<div class="row"><button class="danger" data-del="1">Excluir curva</button></div></div>';
+  });
+  box.innerHTML=h;
+}
+$('#curvas').addEventListener('click',e=>{
+  const card=e.target.closest('.curva'); if(!card) return;
+  const i=+card.dataset.i, c=S.cfg.curvas[i];
+  if(i!==curAct){ curAct=i; document.querySelectorAll('#curvas .curva').forEach(d=>d.classList.toggle('on',+d.dataset.i===i)); drawPlan(); }
+  const b=e.target.closest('button'); if(!b) return;
+  if(b.dataset.ext){ if(c.ext===b.dataset.ext) return; commit(); c.ext=b.dataset.ext; }
+  else if(b.dataset.del){ commit(); S.cfg.curvas.splice(i,1); curAct=-1; }
+  else return;
+  refreshNow(); renderCurvas(); save();
+});
+$('#curvas').addEventListener('change',e=>{
+  const t=e.target, k=t.dataset.k, card=t.closest('.curva'); if(!k||!card) return;
+  const c=S.cfg.curvas[+card.dataset.i], s=t.value.trim();
+  let val;
+  if(k==='pc'||k==='pt'){ val=s===''?null:parseEst(s,S.cfg.interval); if(s!==''&&val==null){toast('Estaca inválida');renderCurvas();return} }
+  else { const n=parseNum(s); if(k==='f'){ if(!(n>=0&&n<=100)){toast('Use de 0 a 100 %');renderCurvas();return} val=n/100; }
+    else { if(!(n>0&&n<(k==='e'?20:500))){toast('Valor inválido');renderCurvas();return} val=n; } }
+  commit(); c[k]=val; refreshNow(); renderCurvas(); save();
+});
+
+// eixo LandXML: substitui as curvas pelas do arquivo; e/transição vêm do XML ou ficam no padrão para digitar
+$('#bXml').onclick=()=>$('#fXml').click();
+$('#fXml').onchange=e=>{
+  const f=e.target.files[0]; e.target.value='';
+  if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    let als;
+    try{ als=parseLandXML(String(rd.result)); }catch(err){ toast('Arquivo XML inválido'); return; }
+    if(!als.length){ toast('Nenhum alinhamento com geometria no XML'); return; }
+    let al=als[0];
+    if(als.length>1){
+      const v=prompt('O XML tem '+als.length+' alinhamentos. Qual usar?\n'+als.map((a,i)=>(i+1)+' – '+a.nome+' ('+a.curvas.length+' curvas)').join('\n'),'1');
+      if(v==null) return;
+      al=als[parseInt(v,10)-1];
+      if(!al){ toast('Número inválido'); return; }
+    }
+    const semE=al.curvas.filter(c=>c.e==null).length;
+    let msg='Eixo "'+al.nome+'": estacas '+fe(al.pts[0][0])+' a '+fe(al.pts[al.pts.length-1][0])+', '+al.curvas.length+' curva(s).';
+    if(al.nEsp) msg+='\n'+al.nEsp+' espiral(is) de transição: o PC/PT usado é o do trecho circular.';
+    if(semE) msg+='\n'+semE+' curva(s) sem superelevação no XML: ficam com e = 4 % e transição de 20 m para você ajustar.';
+    if(S.cfg.curvas.length) msg+='\n\nAs '+S.cfg.curvas.length+' curva(s) atuais serão substituídas.';
+    if(!confirm(msg)) return;
+    commit();
+    S.cfg.eixo={nome:al.nome,pts:al.pts.map(p=>p.map(round3))};
+    S.cfg.curvas=al.curvas.map(c=>normCurva({pc:round3(c.pc),pt:round3(c.pt),ext:c.ext,R:c.R,e:c.e==null?4:Math.round(c.e*100)/100,le:c.le==null?20:round3(c.le),f:c.f==null?0.5:c.f}));
+    curAct=S.cfg.curvas.length?0:-1; pview.fit=true;
+    refreshNow(); renderCurvas(); save();
+    toast(S.cfg.curvas.length+' curva(s) do eixo XML');
+  };
+  rd.readAsText(f);
+};
+$('#bXmlDel').onclick=()=>{
+  if(!confirm('Tirar o eixo XML da planta? As curvas ficam.')) return;
+  commit(); S.cfg.eixo=null; pview.fit=true; refreshNow(); save();
+};
+
 /* ---------- arquivos ---------- */
+$('#bPnezd').onclick=()=>{
+  R=calcState(S);
+  if(!R.rows.some(r=>r.xy)){ toast('Sem coordenadas: importe o PNEZD da coletora primeiro'); return; }
+  const v=prompt('Número do primeiro ponto de projeto:','5001');
+  if(v==null) return;
+  const n0=parseInt(v,10);
+  if(!(n0>=0)){ toast('Número inválido'); return; }
+  const o=buildPNEZD(R.rows,S.cfg,n0);
+  if(!o.n){ toast('Nenhum ponto com greide e coordenadas'); return; }
+  download(new Blob([o.txt],{type:'text/plain'}),'projeto_coletora_'+stamp()+'.txt');
+  toast(o.n+' pontos exportados'+(o.sem?' · '+o.sem+' sem coordenada ficaram de fora':''));
+};
 $('#bCsv').onclick=()=>{
   R=calcState(S);
-  download(new Blob([buildCSV(R.rows,!!S.cfg.useOff)],{type:'text/csv;charset=utf-8'}),'greide_'+stamp()+'.csv');
+  download(new Blob([buildCSV(R.rows,S.cfg)],{type:'text/csv;charset=utf-8'}),'greide_'+stamp()+'.csv');
 };
 $('#bPng').onclick=()=>{
   const go=()=>{
@@ -1402,20 +2016,20 @@ $('#fJson').onchange=e=>{
     let ns;
     try{ ns=normState(JSON.parse(String(rd.result))); }catch(err){ toast('Arquivo de projeto inválido'); return; }
     if(!confirm('Substituir o projeto atual pelo arquivo aberto? (dá para desfazer)')) return;
-    commit(); S=ns; sel=-1; view.fit=true; afterLoad(); toast('Projeto aberto');
+    commit(); S=ns; sel=-1; view.fit=true; pview.fit=true; curAct=-1; afterLoad(); toast('Projeto aberto');
   };
   rd.readAsText(f);
 };
 $('#bNew').onclick=()=>{
   if(!confirm('Apagar o projeto atual e começar um novo?\nSe quiser guardar, exporte o JSON antes.')) return;
-  commit(); S=defState(); sel=-1; view.fit=true; afterLoad(); showTab('dados');
+  commit(); S=defState(); sel=-1; view.fit=true; pview.fit=true; curAct=-1; afterLoad(); showTab('dados');
 };
 
 /* ---------- início ---------- */
 renderGrid(); syncCfgUI(); updUndo();
 R=calcState(S); renderRes();
 let t0=null; try{t0=localStorage.getItem(KEY+'_tab')}catch(e){}
-showTab(['dados','perfil','sec','arq'].includes(t0)?t0:(R.pts.length?'perfil':'dados'));
+showTab(TABS.includes(t0)?t0:(R.pts.length?'perfil':'dados'));
 
 if(/^https?:$/.test(location.protocol)){
   const l=document.createElement('link'); l.rel='manifest'; l.href='manifest.json'; document.head.appendChild(l);
